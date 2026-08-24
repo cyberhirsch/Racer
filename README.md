@@ -1,12 +1,24 @@
 # Racer F1
 
-A native Android racing game in Kotlin. **Your phone is the steering wheel** —
-hold it in landscape and rotate it like a wheel. The horizon on screen stays
-level; only the car turns.
+A racing game where **your phone is the steering wheel** — hold it in landscape
+and rotate it like a wheel. The horizon on screen stays level; only the car
+turns.
 
 Everything is procedural: the car, the circuits and the physics are all
-generated in code. No 3D assets, no game engine — just OpenGL ES 3.0 and a
-Compose HUD.
+generated in code. No 3D assets, no game engine.
+
+It comes in two forms:
+
+| | | |
+| --- | --- | --- |
+| **Android app** | `app/` + `core/` | Kotlin, OpenGL ES 3.0, Compose HUD |
+| **Web version** | `web/` | JavaScript and Three.js, runs in any browser |
+
+The web version is the original prototype and is deployed to GitHub Pages on
+every push that touches it — open the repository's **Environments → github-pages**
+link, or the URL shown on the Actions run, to play it in a browser. The Android
+app is the one that treats the phone as a wheel properly; the web version falls
+back to the keyboard on desktop.
 
 ## Getting the APK
 
@@ -66,6 +78,7 @@ which falls from ~237 km/h on level 1 to ~181 km/h on level 6.
 
     core/   pure Kotlin/JVM — physics, tracks, meshes, game loop, tilt maths
     app/    Android — OpenGL ES renderer, sensors, Compose HUD
+    web/    the JavaScript/Three.js version, deployed to GitHub Pages
 
 The split is deliberate: **all the game logic is free of Android APIs**, so it
 is unit-tested on the JVM rather than trusted by eye or checked by hand on a
@@ -152,3 +165,19 @@ and distance fog.
   reach of a phone GPU.
 - **`GameTest`** plays whole levels: countdown gating, checkpoint order, best
   times, running out of fuel, and that the result does not depend on frame rate.
+
+CI also runs the app on an emulator and the website in a real browser, because
+neither the renderer nor the UI can be checked by a unit test. Both start a
+race and assert the car actually reaches speed — an earlier smoke test only
+checked that the screenshot had a spread of colours, which the *menu* screen
+satisfies just as well, and it passed while the app was unusable.
+
+### The web version
+
+    cd web && python3 -m http.server 8000     # then open localhost:8000
+    node web/tools/browser-check.mjs          # loads it and plays a race
+    node web/tools/autopilot.mjs 8            # drives every circuit headlessly
+    node web/tools/tilt-check.mjs             # tilt maths round-trip
+
+The web version needs `npm i three playwright` for its tools; the page itself
+has Three.js vendored and needs nothing.
