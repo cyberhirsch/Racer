@@ -136,9 +136,8 @@ jobs:
       - name: Print result and screenshot previews
         if: always()
         run: |
-          cat smoke-output/preview-menu.txt || true
-          cat smoke-output/preview.txt || true
-          # Last, so a log window that keeps only the tail still shows it.
+          # The verdict alone: screenshot previews are large enough to push it
+          # out of a tail-only log window, and they are in the artifact anyway.
           cat smoke-output/verdict.txt || true
 
   release:

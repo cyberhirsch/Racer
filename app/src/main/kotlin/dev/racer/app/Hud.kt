@@ -21,6 +21,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,17 +51,39 @@ private val Muted = Color(0xFF93A0AE)
 private val Panel = Color(0xE60E1118)
 
 /**
- * The heads-up display and menus.
+ * A counter that advances once per rendered frame.
  *
- * [tick] is bumped once per rendered frame so this recomposes in step with the
- * simulation; everything else is read straight off the game.
+ * The game state lives outside Compose, so the HUD needs something to tell it
+ * to look again. This is driven by Compose's frame clock: `withFrameNanos`
+ * suspends until the next frame, so exactly one update happens per frame and
+ * late frames simply delay the next one.
+ *
+ * Posting an update per frame from the render thread instead (runOnUiThread)
+ * is what froze the HUD: on a slow device each recomposition takes longer than
+ * a frame, the queue grows without bound, and the main thread never catches up
+ * — leaving the menu on screen, and taking taps, while a race was underway.
  */
 @Composable
-@Suppress("UNUSED_PARAMETER")
+private fun rememberFrameTick(): Int {
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameNanos { }
+            tick++
+        }
+    }
+    return tick
+}
+
+/**
+ * The heads-up display and menus.
+ *
+ * Everything is read straight off the game, refreshed once per frame.
+ */
+@Composable
 fun Hud(
     game: Game,
     steering: TiltSteering,
-    tick: Int,
     tiltAvailable: Boolean,
     onStart: (Int) -> Unit,
     onRetry: () -> Unit,
@@ -65,6 +93,10 @@ fun Hud(
     onInvert: () -> Unit,
     onPedals: (throttle: Boolean, brake: Boolean) -> Unit
 ) {
+    // Read the frame tick here so this composable is what recomposes each
+    // frame, leaving the GL surface beside it untouched.
+    rememberFrameTick()
+
     Box(Modifier.fillMaxSize()) {
         when (game.state) {
             Game.State.MENU -> Menu(game, tiltAvailable, onStart)

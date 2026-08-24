@@ -11,9 +11,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -52,9 +49,6 @@ class GameActivity : ComponentActivity() {
     private var lastLoggedState: Game.State? = null
     private var logTimer = 0.0
 
-    /** Bumped once per rendered frame so the HUD recomposes in step. */
-    private var uiTick by mutableIntStateOf(0)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         game = Game(Prefs(this))
@@ -62,10 +56,7 @@ class GameActivity : ComponentActivity() {
 
         tiltSensor = TiltSensor(this, steering)
         renderer = GlRenderer(game).apply {
-            onFrame = { dt ->
-                advance(dt)
-                runOnUiThread { uiTick++ }
-            }
+            onFrame = { dt -> advance(dt) }
         }
 
         surface = GLSurfaceView(this).apply {
@@ -81,7 +72,6 @@ class GameActivity : ComponentActivity() {
                 Hud(
                     game = game,
                     steering = steering,
-                    tick = uiTick,
                     tiltAvailable = tiltSensor.available,
                     onStart = { level -> beginRace { game.loadLevel(level); game.startCountdown() } },
                     onRetry = { beginRace { game.retry() } },
