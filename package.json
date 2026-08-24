@@ -1,0 +1,16 @@
+{
+  "name": "racer-f1",
+  "version": "1.0.0",
+  "description": "Tilt-to-steer 3D Formula 1 racing game, in the browser",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "check": "node tools/browser-check.mjs",
+    "test": "node tools/tilt-check.mjs && node tools/autopilot.mjs 8"
+  },
+  "devDependencies": {
+    "three": "0.160.0",
+    "playwright": "1.49.0"
+  }
+}
