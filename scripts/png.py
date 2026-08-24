@@ -95,12 +95,23 @@ def downscale(path, target_width):
     return ow, oh, out
 
 
+def posterize(rgb, bits=3):
+    """Drop colour depth so the preview PNG compresses hard.
+
+    The preview exists to show layout and colour, not fine detail, and log
+    APIs return a limited window — a smaller image is one that actually
+    arrives intact.
+    """
+    step = 1 << (8 - bits)
+    return bytearray(min(255, (v // step) * step + step // 2) for v in rgb)
+
+
 if __name__ == '__main__':
     # Usage: png.py <screenshot.png> <target-width>
     path = sys.argv[1]
     target = int(sys.argv[2]) if len(sys.argv) > 2 else 200
     w, h, rgb = downscale(path, target)
-    encoded = base64.b64encode(write_png(None, w, h, rgb)).decode()
+    encoded = base64.b64encode(write_png(None, w, h, posterize(rgb))).decode()
     # Emit the whole image on one line. Log viewers and log APIs window by
     # line count, so wrapping this would push the start of the image out of
     # view exactly when the picture is worth looking at.
