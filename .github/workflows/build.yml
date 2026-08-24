@@ -94,6 +94,10 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # This job's value is the emulator run, and the cache write-back logs
+          # far more than the screenshot preview printed at the end of it.
+          cache-read-only: true
 
       - name: Enable KVM
         run: |

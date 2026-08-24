@@ -84,7 +84,7 @@ CHECK
 
 # Emit a small preview into the log, so the rendering can be reviewed even when
 # the artifact store is unreachable.
-python3 scripts/png.py "$OUT/02-racing.png" 200 > "$OUT/preview.txt"
-python3 scripts/png.py "$OUT/01-after-start.png" 160 > "$OUT/preview-menu.txt"
+python3 scripts/png.py "$OUT/02-racing.png" 140 > "$OUT/preview.txt"
+python3 scripts/png.py "$OUT/01-after-start.png" 110 > "$OUT/preview-menu.txt"
 
 echo "== smoke test passed =="
