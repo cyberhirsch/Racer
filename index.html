@@ -2,42 +2,106 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Ferrari F1 — 3D Model</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0c10; }
-  canvas { display: block; }
-  #ui {
-    position: fixed; top: 16px; left: 16px; z-index: 10;
-    font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    color: #e8eaed; background: rgba(14,17,22,.72); backdrop-filter: blur(8px);
-    border: 1px solid rgba(255,255,255,.10); border-radius: 12px; padding: 14px 16px;
-    max-width: 260px; user-select: none;
-  }
-  #ui h1 { margin: 0 0 2px; font-size: 15px; letter-spacing: .02em; }
-  #ui h1 span { color: #ff2800; }
-  #ui p { margin: 0 0 10px; font-size: 11.5px; color: #9aa3ad; }
-  #ui label { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
-  #ui .hint { margin: 10px 0 0; font-size: 11px; color: #78818b; }
-  #loading {
-    position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
-    background: #0a0c10; color: #ff2800;
-    font: 600 14px ui-sans-serif, system-ui, sans-serif; letter-spacing: .18em;
-  }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0a0c10" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Racer — Tilt to Steer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0c10'/%3E%3Cpath d='M4 20h24l-3 5H7z' fill='%23ff2800'/%3E%3Ccircle cx='10' cy='25' r='3'/%3E%3Ccircle cx='22' cy='25' r='3'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<div id="loading">LOADING…</div>
-<div id="ui">
-  <h1><span>■</span> Ferrari F1</h1>
-  <p>Procedural 3D model — Three.js</p>
-  <label><input type="checkbox" id="spin" checked> Auto-rotate</label>
-  <label><input type="checkbox" id="wheels" checked> Spin wheels</label>
-  <label><input type="checkbox" id="ghost"> Wireframe</label>
-  <p class="hint">Drag to orbit · scroll to zoom · right-drag to pan</p>
+<canvas id="view"></canvas>
+
+<!-- ---------------------------------------------------------------- HUD -->
+<div id="hud" class="hidden">
+  <div id="hud-left">
+    <div id="fuel">
+      <div class="gauge"><div id="fuel-fill" class="fill"></div></div>
+      <div class="cap">FUEL</div>
+      <div id="fuel-text">0.00 kg</div>
+    </div>
+  </div>
+
+  <div id="hud-top">
+    <div class="chip" id="level-chip"><span class="lbl" id="level-num">LEVEL 1</span><b id="level-name">—</b></div>
+    <div class="chip"><span class="lbl">TIME</span><b id="time">0:00.00</b></div>
+    <div class="chip"><span class="lbl">CP</span><b id="checkpoints">0/8</b></div>
+    <div id="progress"><div id="progress-fill"></div></div>
+    <button id="restart" data-ui class="icon" title="Restart level">↺</button>
+  </div>
+
+  <div id="hud-right">
+    <div id="speedo">
+      <b id="speed">0</b><span class="unit">km/h</span>
+      <div id="gear-box"><span class="lbl">GEAR</span><b id="gear">N</b></div>
+    </div>
+    <div id="revs"><div id="rev-fill"></div></div>
+  </div>
+
+  <div id="hud-bottom">
+    <div id="steer-gauge">
+      <div class="tickmark"></div>
+      <div id="steer-needle"></div>
+    </div>
+    <div id="hud-buttons">
+      <button id="recenter" data-ui>CENTRE</button>
+      <button id="invert" data-ui>INVERT</button>
+    </div>
+  </div>
+
+  <!-- Tap zones are the whole screen; these are just the visual affordance. -->
+  <div id="pedal-brake" class="pedal">BRAKE</div>
+  <div id="pedal-gas" class="pedal">GAS</div>
+
+  <div id="offtrack" class="hidden">OFF TRACK</div>
+  <div id="toast"></div>
+  <div id="damage"></div>
 </div>
+
+<div id="countdown" class="hidden"></div>
+
+<!-- --------------------------------------------------------------- MENU -->
+<div id="overlay">
+  <div class="panel" id="menu-panel">
+    <header class="col-full">
+      <h1><span>■</span> RACER<em>F1</em></h1>
+      <p class="sub">Your phone is the steering wheel.</p>
+    </header>
+
+    <div class="col">
+      <div id="how">
+        <div class="how-row"><div class="ico">⟲</div><div><b>Steer</b> — hold the phone in landscape and rotate it like a wheel. The horizon stays level.</div></div>
+        <div class="how-row"><div class="ico">▶</div><div><b>Gas</b> — touch and hold anywhere on the <em>right</em> half.</div></div>
+        <div class="how-row"><div class="ico">◀</div><div><b>Brake</b> — touch and hold anywhere on the <em>left</em> half.</div></div>
+        <div class="how-row"><div class="ico">⛽</div><div><b>Fuel is the clock.</b> Reach the finish before the tank runs dry. Full throttle everywhere will not make it.</div></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="sect">SELECT TRACK</div>
+      <div id="levels"></div>
+      <button id="start" class="cta">START ENGINE</button>
+      <p id="tilt-warning" class="warn hidden">Motion access was declined — keyboard steering (arrow keys / WASD) is active instead.</p>
+      <p class="kbd">Desktop: arrows or WASD to steer, up/down for gas and brake.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------- RESULT -->
+<div id="result" class="hidden">
+  <div class="panel narrow">
+    <h2 id="result-title"></h2>
+    <div id="result-body"></div>
+    <div class="row">
+      <button id="result-menu">TRACKS</button>
+      <button id="result-next" class="cta">NEXT LEVEL</button>
+    </div>
+  </div>
+</div>
+
+<div id="rotate-hint"><div>⟳<br>Rotate to landscape</div></div>
 
 <script type="importmap">
 { "imports": {
@@ -45,453 +109,9 @@
     "three/addons/": "./vendor/three/addons/"
 } }
 </script>
-
 <script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-
-/* ---------------------------------------------------------------- scene */
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
-document.body.appendChild(renderer.domElement);
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0c10);
-scene.fog = new THREE.Fog(0x0a0c10, 18, 48);
-
-const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 200);
-camera.position.set(6.2, 2.6, 6.8);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.06;
-controls.target.set(0, 0.55, 0);
-controls.minDistance = 3.5;
-controls.maxDistance = 22;
-controls.maxPolarAngle = Math.PI / 2 - 0.03;
-
-/* -------------------------------------------------------------- lighting */
-scene.add(new THREE.HemisphereLight(0x9fb6ff, 0x1a1c20, 0.55));
-
-const key = new THREE.DirectionalLight(0xffffff, 2.6);
-key.position.set(6, 9, 5);
-key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
-key.shadow.camera.near = 1;
-key.shadow.camera.far = 40;
-const d = 8;
-Object.assign(key.shadow.camera, { left: -d, right: d, top: d, bottom: -d });
-key.shadow.bias = -0.0006;
-scene.add(key);
-
-const rim = new THREE.DirectionalLight(0xff7a5c, 0.85);
-rim.position.set(-7, 6, -6);
-scene.add(rim);
-
-const fill = new THREE.DirectionalLight(0x88aaff, 0.8);
-fill.position.set(-4, 3, 7);
-scene.add(fill);
-
-// Cheap studio environment so the paint has something to reflect.
-const pmrem = new THREE.PMREMGenerator(renderer);
-const envScene = new THREE.Scene();
-envScene.background = new THREE.Color(0x30343c);
-const strip = new THREE.Mesh(
-  new THREE.BoxGeometry(12, 0.6, 12),
-  new THREE.MeshBasicMaterial({ color: 0xffffff })
-);
-strip.position.y = 5;
-envScene.add(strip);
-scene.environment = pmrem.fromScene(envScene, 0.04).texture;
-
-/* ------------------------------------------------------------- materials */
-const FERRARI_RED = 0xd40000;
-
-const M = {
-  body: new THREE.MeshPhysicalMaterial({
-    color: FERRARI_RED, metalness: 0.55, roughness: 0.22,
-    clearcoat: 1, clearcoatRoughness: 0.06
-  }),
-  bodyDark: new THREE.MeshPhysicalMaterial({
-    color: 0x8f0000, metalness: 0.6, roughness: 0.3, clearcoat: 0.8
-  }),
-  carbon: new THREE.MeshPhysicalMaterial({
-    color: 0x14161a, metalness: 0.35, roughness: 0.42, clearcoat: 0.7, clearcoatRoughness: 0.25
-  }),
-  matteBlack: new THREE.MeshStandardMaterial({ color: 0x0d0f12, metalness: 0.2, roughness: 0.85 }),
-  rubber: new THREE.MeshStandardMaterial({ color: 0x121316, metalness: 0.0, roughness: 0.92 }),
-  chrome: new THREE.MeshStandardMaterial({ color: 0xd8dde3, metalness: 1.0, roughness: 0.16 }),
-  gold: new THREE.MeshStandardMaterial({ color: 0xd9a441, metalness: 1.0, roughness: 0.3 }),
-  white: new THREE.MeshStandardMaterial({ color: 0xf2f2f2, metalness: 0.1, roughness: 0.4 }),
-  yellow: new THREE.MeshStandardMaterial({ color: 0xffd400, metalness: 0.2, roughness: 0.35 }),
-  glow: new THREE.MeshBasicMaterial({ color: 0xff2200 })
-};
-
-const roundedBox = (w, h, d2, r = 0.04, s = 3) => new RoundedBoxGeometry(w, h, d2, s, r);
-
-const add = (parent, geo, mat, pos = [0, 0, 0], rot = [0, 0, 0], scl) => {
-  const m = new THREE.Mesh(geo, mat);
-  m.position.set(...pos);
-  m.rotation.set(...rot);
-  if (scl) m.scale.set(...scl);
-  m.castShadow = true;
-  m.receiveShadow = true;
-  parent.add(m);
-  return m;
-};
-
-/* ------------------------------------------------------------------ car */
-// Convention: +Z is forward (nose), car is ~5.4 long, 2.0 wide.
-const car = new THREE.Group();
-scene.add(car);
-
-const FRONT_AXLE = 1.72, REAR_AXLE = -1.66;
-
-/* --- survival cell / monocoque: lofted from a series of cross-sections --- */
-function monocoque() {
-  // [z, halfWidth, bottomY, topY] keyframes from nose tip to gearbox.
-  const sections = [
-    [ 2.62, 0.075, 0.30, 0.40],
-    [ 2.25, 0.115, 0.26, 0.46],
-    [ 1.80, 0.175, 0.20, 0.55],
-    [ 1.30, 0.245, 0.15, 0.66],
-    [ 0.80, 0.300, 0.13, 0.74],
-    [ 0.30, 0.330, 0.12, 0.78],
-    [-0.10, 0.330, 0.12, 0.86],
-    [-0.55, 0.310, 0.13, 0.94],
-    [-1.05, 0.265, 0.15, 0.88],
-    [-1.55, 0.215, 0.17, 0.74],
-    [-2.00, 0.150, 0.19, 0.60],
-    [-2.30, 0.100, 0.21, 0.50]
-  ];
-  // Rounded-rectangle ring, 12 verts, parameterised per section.
-  const RING = 16;
-  const ringPoints = (hw, by, ty) => {
-    const cy = (by + ty) / 2, hh = (ty - by) / 2, pts = [];
-    for (let i = 0; i < RING; i++) {
-      const a = (i / RING) * Math.PI * 2;
-      // superellipse -> boxy but rounded cockpit section
-      const c = Math.cos(a), s = Math.sin(a), p = 2.6;
-      const sx = Math.sign(c) * Math.pow(Math.abs(c), 2 / p);
-      const sy = Math.sign(s) * Math.pow(Math.abs(s), 2 / p);
-      pts.push(new THREE.Vector3(sx * hw, cy + sy * hh, 0));
-    }
-    return pts;
-  };
-
-  const pos = [], idx = [];
-  sections.forEach(([z, hw, by, ty]) => {
-    ringPoints(hw, by, ty).forEach(p => pos.push(p.x, p.y, z));
-  });
-  for (let s = 0; s < sections.length - 1; s++) {
-    for (let i = 0; i < RING; i++) {
-      const a = s * RING + i, b = s * RING + (i + 1) % RING;
-      const c = a + RING, dd = b + RING;
-      idx.push(a, c, b, b, c, dd);
-    }
-  }
-  // cap both ends with a fan
-  const capFan = (ringStart, flip) => {
-    for (let i = 1; i < RING - 1; i++) {
-      const a = ringStart, b = ringStart + i, c = ringStart + i + 1;
-      idx.push(...(flip ? [a, c, b] : [a, b, c]));
-    }
-  };
-  capFan(0, false);
-  capFan((sections.length - 1) * RING, true);
-
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
-}
-add(car, monocoque(), M.body);
-
-// Nose tip cap + front wing pylons
-add(car, new THREE.SphereGeometry(0.078, 20, 14), M.body, [0, 0.35, 2.63], [0, 0, 0], [1, 0.85, 1.4]);
-[-0.16, 0.16].forEach(x =>
-  add(car, roundedBox(0.05, 0.24, 0.30, 0.02), M.carbon, [x, 0.19, 2.36], [0.22, 0, 0])
-);
-
-/* ------------------------------------------------------------ front wing */
-const frontWing = new THREE.Group();
-frontWing.position.set(0, 0, 2.42);
-car.add(frontWing);
-
-// Main plane + three upper flaps, each with a bit of anhedral toward the tips.
-const wingPlane = (w, chord, thick, y, z, tilt, mat) => {
-  const g = roundedBox(w, thick, chord, thick * 0.45);
-  return add(frontWing, g, mat, [0, y, z], [tilt, 0, 0]);
-};
-// Main plane, then three flaps stacked up and back off its trailing edge.
-wingPlane(1.94, 0.46, 0.035, 0.070, 0.10, -0.06, M.body);
-wingPlane(1.90, 0.26, 0.032, 0.140, -0.09, -0.26, M.body);
-wingPlane(1.84, 0.22, 0.030, 0.215, -0.21, -0.40, M.bodyDark);
-wingPlane(1.76, 0.18, 0.028, 0.290, -0.31, -0.54, M.carbon);
-
-// Endplates + tip footplates
-[-1, 1].forEach(s => {
-  const ep = add(frontWing, roundedBox(0.035, 0.52, 0.62, 0.02), M.carbon,
-    [s * 0.98, 0.23, -0.02], [0, s * 0.06, s * -0.10]);
-  ep.castShadow = true;
-  add(frontWing, roundedBox(0.16, 0.026, 0.42, 0.012), M.carbon, [s * 0.94, 0.02, -0.02], [0, s * 0.08, 0]);
-  // vertical strakes under the main plane
-  for (let i = 0; i < 3; i++)
-    add(frontWing, roundedBox(0.02, 0.10, 0.22, 0.008), M.matteBlack,
-      [s * (0.42 + i * 0.16), 0.02, -0.10], [0, s * 0.12, 0]);
-});
-
-/* ------------------------------------------------- sidepods & bargeboards */
-function sidepod(side) {
-  const g = new THREE.Group();
-  g.position.set(side * 0.52, 0.40, -0.55);
-  car.add(g);
-
-  // Main volume: wide at the inlet, tapering into a coke-bottle rear.
-  const shell = add(g, roundedBox(0.70, 0.60, 1.90, 0.16, 5), M.body, [0, 0.04, 0]);
-  shell.geometry = shell.geometry.clone();
-  const p = shell.geometry.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const z = p.getZ(i);
-    const t = THREE.MathUtils.smoothstep(-z, -0.35, 0.95); // 0 front -> 1 rear
-    p.setX(i, p.getX(i) * (1 - 0.62 * t));
-    p.setY(i, p.getY(i) * (1 - 0.34 * t) - 0.10 * t);
-  }
-  p.needsUpdate = true;
-  shell.geometry.computeVertexNormals();
-
-  // Inlet mouth
-  add(g, roundedBox(0.50, 0.36, 0.10, 0.06), M.matteBlack, [0.02, 0.05, 0.92]);
-  add(g, roundedBox(0.58, 0.44, 0.06, 0.05), M.carbon, [0.02, 0.05, 0.96]);
-
-  // Undercut floor edge
-  add(g, roundedBox(0.70, 0.05, 1.80, 0.02), M.carbon, [-0.02, -0.24, -0.05], [0, 0, side * 0.05]);
-
-  // Bargeboard cluster ahead of the pod
-  for (let i = 0; i < 3; i++)
-    add(g, roundedBox(0.025, 0.30 - i * 0.05, 0.34, 0.012), M.carbon,
-      [-0.10 + i * 0.10, -0.02 - i * 0.02, 1.18], [0, side * (0.18 + i * 0.06), side * 0.10]);
-
-  // Winglet on the pod shoulder
-  add(g, roundedBox(0.46, 0.022, 0.26, 0.01), M.carbon, [0.02, 0.30, 0.34], [-0.12, 0, side * 0.18]);
-  return g;
-}
-sidepod(1); sidepod(-1);
-
-/* ------------------------------------------------------------------ floor */
-const floorPan = add(car, roundedBox(1.52, 0.06, 3.55, 0.03), M.carbon, [0, 0.10, -0.25]);
-floorPan.receiveShadow = true;
-[-1, 1].forEach(s =>
-  add(car, roundedBox(0.10, 0.05, 3.3, 0.02), M.matteBlack, [s * 0.78, 0.11, -0.30], [0, 0, s * 0.10])
-);
-
-// Diffuser: stepped ramp + vertical strakes
-const diff = new THREE.Group();
-diff.position.set(0, 0.14, -2.05);
-car.add(diff);
-add(diff, roundedBox(1.34, 0.05, 0.80, 0.02), M.carbon, [0, 0.10, -0.30], [-0.26, 0, 0]);
-for (let i = -2; i <= 2; i++)
-  add(diff, roundedBox(0.022, 0.20, 0.72, 0.01), M.matteBlack, [i * 0.26, 0.14, -0.30], [-0.26, 0, 0]);
-
-/* -------------------------------------------------- cockpit, halo, airbox */
-// Cockpit opening
-add(car, roundedBox(0.50, 0.10, 0.90, 0.05), M.matteBlack, [0, 0.855, 0.10]);
-// Headrest
-add(car, roundedBox(0.52, 0.22, 0.26, 0.09), M.matteBlack, [0, 0.94, -0.40]);
-// Driver helmet (a little presence in the tub)
-add(car, new THREE.SphereGeometry(0.155, 24, 18), M.white, [0, 0.95, -0.06]);
-add(car, new THREE.SphereGeometry(0.152, 24, 18, 0, Math.PI * 2, 0.9, 0.5), M.matteBlack, [0, 0.95, -0.05]);
-add(car, roundedBox(0.20, 0.06, 0.05, 0.02), M.yellow, [0, 0.965, 0.115]);
-
-// Halo: central pylon + titanium hoop
-add(car, roundedBox(0.07, 0.20, 0.10, 0.03), M.chrome, [0, 0.90, 0.60]);
-const haloShape = new THREE.Shape();
-{
-  // hoop drawn in XY then swept along a torus-ish curve
-  const curve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3( 0.00, 0.99,  0.66),
-    new THREE.Vector3( 0.26, 1.02,  0.44),
-    new THREE.Vector3( 0.38, 1.06, -0.02),
-    new THREE.Vector3( 0.34, 1.10, -0.42),
-    new THREE.Vector3( 0.20, 1.12, -0.60),
-    new THREE.Vector3(-0.20, 1.12, -0.60),
-    new THREE.Vector3(-0.34, 1.10, -0.42),
-    new THREE.Vector3(-0.38, 1.06, -0.02),
-    new THREE.Vector3(-0.26, 1.02,  0.44),
-    new THREE.Vector3( 0.00, 0.99,  0.66)
-  ], true, 'catmullrom', 0.4);
-  add(car, new THREE.TubeGeometry(curve, 120, 0.035, 12, true), M.chrome);
-}
-// Rear halo mounts
-[-1, 1].forEach(s => add(car, roundedBox(0.05, 0.18, 0.06, 0.02), M.chrome, [s * 0.30, 1.04, -0.60]));
-
-// Airbox + engine cover spine
-add(car, new THREE.CylinderGeometry(0.20, 0.24, 0.34, 24, 1, false, -Math.PI/2, Math.PI),
-    M.body, [0, 1.03, -0.78], [Math.PI / 2, 0, 0]);
-add(car, new THREE.CylinderGeometry(0.145, 0.16, 0.20, 20), M.matteBlack, [0, 1.03, -0.66], [Math.PI / 2, 0, 0]);
-{
-  const cover = add(car, roundedBox(0.46, 0.52, 1.30, 0.16, 5), M.body, [0, 0.80, -1.35]);
-  cover.geometry = cover.geometry.clone();
-  const p = cover.geometry.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const t = THREE.MathUtils.smoothstep(-p.getZ(i), -0.65, 0.65);
-    p.setX(i, p.getX(i) * (1 - 0.55 * t));
-    p.setY(i, p.getY(i) * (1 - 0.45 * t) - 0.08 * t);
-  }
-  p.needsUpdate = true;
-  cover.geometry.computeVertexNormals();
-}
-// Shark-fin-ish spine + exhaust
-add(car, roundedBox(0.03, 0.20, 0.70, 0.01), M.bodyDark, [0, 0.86, -1.62], [0.10, 0, 0]);
-add(car, new THREE.CylinderGeometry(0.075, 0.09, 0.22, 18), M.chrome, [0, 0.70, -2.22], [Math.PI / 2, 0, 0]);
-add(car, new THREE.CylinderGeometry(0.055, 0.055, 0.02, 18), M.glow, [0, 0.70, -2.32], [Math.PI / 2, 0, 0]);
-// Rain light
-add(car, roundedBox(0.10, 0.10, 0.05, 0.02), M.glow, [0, 0.44, -2.30]);
-
-/* ------------------------------------------------------------- rear wing */
-const rearWing = new THREE.Group();
-rearWing.position.set(0, 0.95, -2.06);
-car.add(rearWing);
-add(rearWing, roundedBox(1.05, 0.045, 0.42, 0.02), M.body, [0, 0.22, 0.02], [-0.16, 0, 0]);
-add(rearWing, roundedBox(1.05, 0.040, 0.28, 0.02), M.carbon, [0, 0.36, -0.14], [-0.55, 0, 0]);
-[-1, 1].forEach(s => {
-  add(rearWing, roundedBox(0.035, 0.62, 0.66, 0.03), M.body, [s * 0.535, 0.20, -0.02]);
-  add(rearWing, roundedBox(0.05, 0.44, 0.06, 0.02), M.carbon, [s * 0.32, -0.02, -0.10], [0.2, 0, 0]);
-});
-// Beam wing under the main element
-add(rearWing, roundedBox(0.95, 0.035, 0.22, 0.015), M.carbon, [0, -0.30, -0.10], [-0.30, 0, 0]);
-
-/* ---------------------------------------------------------------- wheels */
-const wheels = [];
-function wheel(x, z, front) {
-  const g = new THREE.Group();
-  g.position.set(x, 0.36, z);
-  car.add(g);
-
-  const R = front ? 0.355 : 0.375, W = front ? 0.30 : 0.40;
-
-  // Tyre with a slightly crowned tread (shoulders pulled in below).
-  const tyre = add(g, new THREE.CylinderGeometry(R, R, W, 40, 1), M.rubber, [0, 0, 0], [0, 0, Math.PI / 2]);
-  tyre.geometry = tyre.geometry.clone();
-  {
-    const p = tyre.geometry.attributes.position;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < p.count; i++) {
-      v.fromBufferAttribute(p, i);
-      const edge = Math.abs(v.y) / (W / 2);           // 0 centre -> 1 shoulder
-      const r = Math.hypot(v.x, v.z);
-      if (r > R * 0.6) {
-        const k = 1 - 0.09 * Math.pow(edge, 3);
-        p.setX(i, v.x * k); p.setZ(i, v.z * k);
-      }
-    }
-    p.needsUpdate = true;
-    tyre.geometry.computeVertexNormals();
-  }
-
-  // Sidewall band (Pirelli-style stripe) + rim + spokes
-  [-1, 1].forEach(s => {
-    add(g, new THREE.TorusGeometry(R * 0.80, 0.012, 8, 48), M.yellow, [s * W / 2 * 0.99, 0, 0], [0, Math.PI / 2, 0]);
-  });
-  add(g, new THREE.CylinderGeometry(R * 0.66, R * 0.66, W * 0.96, 32), M.chrome, [0, 0, 0], [0, 0, Math.PI / 2]);
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    add(g, roundedBox(0.05, R * 0.60, 0.05, 0.02), M.matteBlack,
-      [0, Math.sin(a) * R * 0.33, Math.cos(a) * R * 0.33], [a, Math.PI / 2, 0]);
-  }
-  add(g, new THREE.CylinderGeometry(0.075, 0.075, W * 1.02, 20), M.gold, [0, 0, 0], [0, 0, Math.PI / 2]);
-
-  // Brake duct / wheel cover on the inboard face
-  const sign = Math.sign(x);
-  add(g, new THREE.CylinderGeometry(R * 0.62, R * 0.62, 0.05, 28), M.carbon,
-    [-sign * (W / 2 + 0.03), 0, 0], [0, 0, Math.PI / 2]);
-
-  // Suspension: two wishbones + trackrod back to the tub
-  const hub = new THREE.Vector3(x, 0.36, z);
-  const inboard = [
-    new THREE.Vector3(sign * 0.22, 0.52, z + (front ? 0.18 : -0.16)),
-    new THREE.Vector3(sign * 0.22, 0.28, z + (front ? -0.22 : 0.20)),
-    new THREE.Vector3(sign * 0.24, 0.44, z + (front ? -0.30 : 0.28))
-  ];
-  inboard.forEach((from, i) => {
-    const to = hub.clone().add(new THREE.Vector3(-sign * 0.05, i === 1 ? -0.10 : 0.06, 0));
-    const dir = to.clone().sub(from);
-    const arm = new THREE.Mesh(
-      new THREE.CylinderGeometry(i === 2 ? 0.018 : 0.026, i === 2 ? 0.018 : 0.026, dir.length(), 10),
-      M.carbon
-    );
-    arm.position.copy(from).add(dir.clone().multiplyScalar(0.5));
-    arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-    arm.castShadow = true;
-    car.add(arm);
-  });
-
-  wheels.push(g);
-  return g;
-}
-wheel( 0.86, FRONT_AXLE, true);
-wheel(-0.86, FRONT_AXLE, true);
-wheel( 0.90, REAR_AXLE, false);
-wheel(-0.90, REAR_AXLE, false);
-
-/* ------------------------------------------------------------- liveries */
-// Number roundel + a couple of white accent stripes.
-add(car, roundedBox(0.005, 0.26, 0.34, 0.002), M.white, [0.335, 0.60, -0.05]);
-add(car, roundedBox(0.005, 0.26, 0.34, 0.002), M.white, [-0.335, 0.60, -0.05]);
-add(car, roundedBox(0.20, 0.004, 1.10, 0.002), M.white, [0, 0.795, 0.55], [-0.12, 0, 0]);
-
-/* --------------------------------------------------------------- ground */
-const grid = new THREE.GridHelper(60, 60, 0x2a2f38, 0x181c22);
-grid.position.y = 0.001;
-scene.add(grid);
-
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(30, 64),
-  new THREE.MeshStandardMaterial({ color: 0x15181d, roughness: 0.85, metalness: 0.1 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
-
-/* ------------------------------------------------------------------ ui */
-const ui = {
-  spin: document.getElementById('spin'),
-  wheels: document.getElementById('wheels'),
-  ghost: document.getElementById('ghost')
-};
-ui.ghost.addEventListener('change', () => {
-  const on = ui.ghost.checked;
-  Object.values(M).forEach(m => { if ('wireframe' in m) m.wireframe = on; });
-});
-
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
-
-/* --------------------------------------------------------------- render */
-const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
-  const dt = clock.getDelta();
-  if (ui.spin.checked) car.rotation.y += dt * 0.28;
-  if (ui.wheels.checked) wheels.forEach(w => (w.rotation.x -= dt * 9));
-  M.glow.color.setHSL(0.02, 1, 0.42 + 0.12 * Math.sin(clock.elapsedTime * 4));
-  controls.update();
-  renderer.render(scene, camera);
-});
-
-// Debug/preset camera hook (used by tooling and handy from the console).
-window.setView = ([x, y, z]) => { camera.position.set(x, y, z); controls.update(); };
-
-document.getElementById('loading').remove();
+  import { Game } from './src/game.js';
+  window.game = new Game(document.getElementById('view'));
 </script>
 </body>
 </html>
