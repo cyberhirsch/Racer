@@ -65,6 +65,12 @@ if [ "$h" -gt "$w" ]; then t=$w; w=$h; h=$t; fi
 TX=$(( w * 4 / 5 )); TY=$(( h / 2 ))
 echo "holding the throttle at ${TX},${TY} (screen ${w}x${h})"
 
+# What is actually on screen right now? If the menu is still up while the game
+# reports RACING, the HUD is not following the game state.
+adb shell uiautomator dump /sdcard/ui2.xml >/dev/null 2>&1 || true
+ON_SCREEN=$(adb shell cat /sdcard/ui2.xml 2>/dev/null | grep -o 'text="[^"]*"' | sed 's/text=//' | sort -u | tr '\n' ' ')
+echo "on screen during the race: $ON_SCREEN"
+
 adb shell input motionevent DOWN "$TX" "$TY" || adb shell input tap "$TX" "$TY"
 sleep 5
 adb exec-out screencap -p > "$OUT/02-racing.png"
@@ -91,18 +97,14 @@ FOREGROUND=no
 adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
 
 {
-    echo "SMOKE crashed=$CRASHED shaderProblem=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
     echo "SMOKE game log:"
-    grep -E "Racer  *: " "$OUT/logcat.txt" | tail -30 | sed 's/^/SMOKE   /' || true
+    grep -E "Racer  *: " "$OUT/logcat.txt" | tail -18 | sed 's/^/SMOKE   /' || true
     if [ "$CRASHED" = yes ]; then
         echo "SMOKE crash:"
         grep -A 12 -E "FATAL EXCEPTION" "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true
     fi
-    if [ "$REACHED_RACING" = no ]; then
-        echo "SMOKE the menu tap did not start a race; visible text was:"
-        adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
-        adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="[^"]*"' | sort -u | head -20 | sed 's/^/SMOKE   /' || true
-    fi
+    echo "SMOKE on screen during the race: $ON_SCREEN"
+    echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
 } >> "$VERDICT"
 
 # Previews are generated unconditionally: a failing run is exactly when someone
