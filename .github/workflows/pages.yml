@@ -62,6 +62,10 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on the first time this runs, rather than requiring
+          # someone to flip the switch in the repository settings by hand.
+          enablement: true
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@v3
