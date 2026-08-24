@@ -54,6 +54,10 @@ jobs:
     name: Deploy to GitHub Pages
     needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # the gh-pages fallback pushes a branch
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -69,20 +73,37 @@ jobs:
         uses: actions/configure-pages@v5
         continue-on-error: true
 
-      - name: Explain how to switch Pages on
+      # Fallback: publish to a gh-pages branch instead. GitHub has long
+      # treated that branch as a site automatically, so this can work without
+      # anyone touching the repository settings — and where it does not, the
+      # branch is still there to point Pages at.
+      - name: Publish to the gh-pages branch instead
         if: steps.pages.outcome == 'failure'
         run: |
-          echo "::error::GitHub Pages is not enabled for this repository."
-          echo "Enable it once, then re-run this workflow:"
-          echo "  Settings -> Pages -> Build and deployment -> Source: GitHub Actions"
-          echo "The site will then publish to https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
-          exit 1
+          echo "::warning::Pages is not enabled for GitHub Actions; publishing the gh-pages branch instead."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -rf /tmp/site
+          cp -r web /tmp/site
+          # Stop Jekyll from touching the files; this is a plain static site.
+          touch /tmp/site/.nojekyll
+          cd /tmp/site
+          git init -q -b gh-pages
+          git add -A
+          git commit -q -m "Publish the web version from ${{ github.sha }}"
+          git push -q --force \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
+          echo "Pushed the site to the gh-pages branch."
+          echo "If it is not live shortly at https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/,"
+          echo "set Settings -> Pages -> Source to either 'GitHub Actions' or 'Deploy from a branch: gh-pages'."
 
       - name: Upload the site
+        if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web
 
       - name: Deploy
         id: deployment
+        if: steps.pages.outcome == 'success'
         uses: actions/deploy-pages@v4
