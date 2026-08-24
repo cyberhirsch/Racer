@@ -130,6 +130,7 @@ jobs:
         run: |
           cat smoke-output/preview-menu.txt || true
           cat smoke-output/preview.txt || true
+          cat smoke-output/preview-late.txt || true
 
       - name: Upload screenshots and logs
         if: always()

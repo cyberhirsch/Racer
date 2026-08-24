@@ -101,7 +101,7 @@ if __name__ == '__main__':
     target = int(sys.argv[2]) if len(sys.argv) > 2 else 200
     w, h, rgb = downscale(path, target)
     encoded = base64.b64encode(write_png(None, w, h, rgb)).decode()
-    print(f"PREVIEW {path} {w}x{h}")
-    for i in range(0, len(encoded), 120):
-        print(encoded[i:i + 120])
-    print("PREVIEW-END")
+    # Emit the whole image on one line. Log viewers and log APIs window by
+    # line count, so wrapping this would push the start of the image out of
+    # view exactly when the picture is worth looking at.
+    print(f"PREVIEW {path} {w}x{h} {encoded}")
