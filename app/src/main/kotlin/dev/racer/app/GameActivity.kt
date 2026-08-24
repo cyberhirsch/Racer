@@ -1,22 +1,21 @@
 package dev.racer.app
 
-import android.annotation.SuppressLint
 import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.view.MotionEvent
-import android.view.View
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -28,8 +27,13 @@ import dev.racer.core.TiltSteering
 /**
  * The whole app: a GLSurfaceView drawing the world, with a Compose HUD on top.
  *
- * The physics and rendering are driven from the GL thread's frame callback, and
- * the HUD reads the resulting state each recomposition.
+ * Physics and rendering are driven from the GL thread's frame callback; the HUD
+ * reads the resulting state each recomposition.
+ *
+ * All touch input is handled in Compose. The GLSurfaceView is for drawing only
+ * — an embedded Android View that consumes touches sits inside the Compose
+ * hierarchy and swallows gestures before the HUD's buttons ever see them, which
+ * makes the menus unusable.
  */
 class GameActivity : ComponentActivity() {
 
@@ -41,13 +45,16 @@ class GameActivity : ComponentActivity() {
     private lateinit var game: Game
 
     /** Screen halves: right is the throttle, left is the brake. */
-    private var throttleDown = false
-    private var brakeDown = false
+    @Volatile private var throttleDown = false
+    @Volatile private var brakeDown = false
     private var throttle = 0.0
     private var brake = 0.0
 
-    /** Mirrors of the game state, for Compose to observe. */
-    private var uiTick by mutableStateOf(0)
+    private var lastLoggedState: Game.State? = null
+    private var logTimer = 0.0
+
+    /** Bumped once per rendered frame so the HUD recomposes in step. */
+    private var uiTick by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,19 +65,11 @@ class GameActivity : ComponentActivity() {
         renderer = GlRenderer(game).apply {
             onFrame = { dt ->
                 advance(dt)
-                // The HUD reads the game directly; this just asks Compose to
-                // look again now that the frame has advanced.
                 runOnUiThread { uiTick++ }
             }
         }
 
-        surface = object : GLSurfaceView(this) {
-            @SuppressLint("ClickableViewAccessibility")
-            override fun onTouchEvent(event: MotionEvent): Boolean {
-                handleTouch(event)
-                return true
-            }
-        }.apply {
+        surface = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
             setRenderer(renderer)
             renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
@@ -79,30 +78,40 @@ class GameActivity : ComponentActivity() {
         setContent {
             Box(Modifier.fillMaxSize()) {
                 AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
+
+                // Pedals: only while a race is on, and below the HUD's own
+                // controls in z-order so its buttons still win a tap.
+                if (game.state == Game.State.RACING || game.state == Game.State.COUNTDOWN) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val half = size.width / 2f
+                                        var left = false
+                                        var right = false
+                                        for (change in event.changes) {
+                                            if (!change.pressed) continue
+                                            if (change.position.x > half) right = true else left = true
+                                        }
+                                        throttleDown = right
+                                        brakeDown = left
+                                    }
+                                }
+                            }
+                    )
+                }
+
                 Hud(
                     game = game,
                     steering = steering,
                     tick = uiTick,
                     tiltAvailable = tiltSensor.available,
-                    onStart = { level ->
-                        game.loadLevel(level)
-                        game.resetCamera()
-                        renderer.setTrack(game.track!!)
-                        steering.calibrate()
-                        game.startCountdown()
-                    },
-                    onRetry = {
-                        game.retry()
-                        game.resetCamera()
-                        renderer.setTrack(game.track!!)
-                        steering.calibrate()
-                    },
-                    onNext = {
-                        game.nextLevel()
-                        game.resetCamera()
-                        renderer.setTrack(game.track!!)
-                        steering.calibrate()
-                    },
+                    onStart = { level -> beginRace { game.loadLevel(level); game.startCountdown() } },
+                    onRetry = { beginRace { game.retry() } },
+                    onNext = { beginRace { game.nextLevel() } },
                     onMenu = { game.toMenu() },
                     onRecentre = { steering.calibrate() },
                     onInvert = { steering.invert = !steering.invert }
@@ -110,6 +119,19 @@ class GameActivity : ComponentActivity() {
             }
         }
         goFullScreen()
+    }
+
+    /** Shared setup for starting, retrying or advancing a level. */
+    private fun beginRace(load: () -> Unit) {
+        load()
+        game.resetCamera()
+        game.track?.let { renderer.setTrack(it) }
+        steering.calibrate()
+        throttleDown = false
+        brakeDown = false
+        throttle = 0.0
+        brake = 0.0
+        Log.i(TAG, "level ${game.levelIndex + 1} (${game.config.name}) starting")
     }
 
     private fun advance(dt: Double) {
@@ -124,22 +146,36 @@ class GameActivity : ComponentActivity() {
 
         if (wasRacing && game.lastImpact > 6.0) vibrate(40)
         if (wasRacing && game.state == Game.State.FINISHED) vibrate(120)
+
+        logProgress(dt)
     }
 
-    private fun handleTouch(event: MotionEvent) {
-        // Multi-touch aware, so braking and accelerating together works.
-        var left = false
-        var right = false
-        val action = event.actionMasked
-        for (i in 0 until event.pointerCount) {
-            val lifted = (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP)
-                    && i == event.actionIndex
-            if (lifted) continue
-            if (event.getX(i) > surface.width / 2f) right = true else left = true
+    /**
+     * Log state changes and a periodic heartbeat.
+     *
+     * This is what the CI smoke test asserts against: it proves the whole chain
+     * — touch, physics, rendering — is actually working, which a screenshot
+     * alone cannot show.
+     */
+    private fun logProgress(dt: Double) {
+        if (game.state != lastLoggedState) {
+            lastLoggedState = game.state
+            Log.i(TAG, "state -> ${game.state}")
+            logTimer = 0.0
         }
-        if (action == MotionEvent.ACTION_CANCEL) { left = false; right = false }
-        throttleDown = right
-        brakeDown = left
+        if (game.state == Game.State.RACING) {
+            logTimer += dt
+            if (logTimer >= 1.0) {
+                logTimer = 0.0
+                Log.i(
+                    TAG,
+                    "racing speed=${game.speedKmh}kmh gear=${game.gearLabel} " +
+                        "fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
+                        "cp=${game.nextCheckpoint}/${game.checkpointTotal} " +
+                        "throttle=${"%.2f".format(throttle)} steer=${"%.2f".format(steering.steer)}"
+                )
+            }
+        }
     }
 
     private fun vibrate(ms: Long) {
@@ -183,5 +219,9 @@ class GameActivity : ComponentActivity() {
         tiltSensor.stop()
         throttleDown = false
         brakeDown = false
+    }
+
+    private companion object {
+        const val TAG = "Racer"
     }
 }

@@ -128,9 +128,11 @@ jobs:
       - name: Print screenshot previews
         if: always()
         run: |
+          # The game's own progress log is the real evidence; the previews let
+          # a human confirm it looks right.
+          grep -E "Racer.*(state ->|racing |level )" smoke-output/logcat.txt | tail -25 || true
           cat smoke-output/preview-menu.txt || true
           cat smoke-output/preview.txt || true
-          cat smoke-output/preview-late.txt || true
 
       - name: Upload screenshots and logs
         if: always()
