@@ -60,12 +60,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pages has to be switched on once by hand, in
+      # Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
+      # The workflow token can deploy to Pages but cannot create the site —
+      # that needs repository admin rights, which GITHUB_TOKEN never has.
       - name: Configure Pages
+        id: pages
         uses: actions/configure-pages@v5
-        with:
-          # Turn Pages on the first time this runs, rather than requiring
-          # someone to flip the switch in the repository settings by hand.
-          enablement: true
+        continue-on-error: true
+
+      - name: Explain how to switch Pages on
+        if: steps.pages.outcome == 'failure'
+        run: |
+          echo "::error::GitHub Pages is not enabled for this repository."
+          echo "Enable it once, then re-run this workflow:"
+          echo "  Settings -> Pages -> Build and deployment -> Source: GitHub Actions"
+          echo "The site will then publish to https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          exit 1
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@v3

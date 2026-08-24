@@ -14,11 +14,15 @@ It comes in two forms:
 | **Android app** | `app/` + `core/` | Kotlin, OpenGL ES 3.0, Compose HUD |
 | **Web version** | `web/` | JavaScript and Three.js, runs in any browser |
 
-The web version is the original prototype and is deployed to GitHub Pages on
-every push that touches it — open the repository's **Environments → github-pages**
-link, or the URL shown on the Actions run, to play it in a browser. The Android
-app is the one that treats the phone as a wheel properly; the web version falls
-back to the keyboard on desktop.
+The web version is the original prototype and deploys to GitHub Pages on every
+push that touches `web/`. The Android app is the one that treats the phone as a
+wheel properly; the web version falls back to the keyboard on desktop.
+
+> **One-time setup for the website:** GitHub Pages has to be switched on by
+> hand, under **Settings → Pages → Build and deployment → Source: GitHub
+> Actions**. A workflow token is allowed to publish to Pages but not to create
+> the site, so this cannot be automated. Once it is on, the Website workflow
+> publishes to `https://<owner>.github.io/Racer/` on every push.
 
 ## Getting the APK
 
