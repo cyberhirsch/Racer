@@ -122,18 +122,6 @@ jobs:
           disable-animations: true
           script: ./scripts/smoke-test.sh
 
-      # The artifact store is not reachable from every environment, so also
-      # print a downscaled screenshot into the log, where anyone reading the
-      # run can decode it and look at the rendering.
-      - name: Print screenshot previews
-        if: always()
-        run: |
-          # The game's own progress log is the real evidence; the previews let
-          # a human confirm it looks right.
-          grep -E "Racer.*(state ->|racing |level )" smoke-output/logcat.txt | tail -25 || true
-          cat smoke-output/preview-menu.txt || true
-          cat smoke-output/preview.txt || true
-
       - name: Upload screenshots and logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -141,6 +129,16 @@ jobs:
           name: smoke-test
           path: smoke-output
           if-no-files-found: ignore
+
+      # Printed last, so the verdict and the screenshots survive any log window
+      # a reader or API gives back. The artifact store is not reachable from
+      # every environment.
+      - name: Print result and screenshot previews
+        if: always()
+        run: |
+          cat smoke-output/verdict.txt || true
+          cat smoke-output/preview-menu.txt || true
+          cat smoke-output/preview.txt || true
 
   release:
     name: Publish release

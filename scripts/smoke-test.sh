@@ -70,44 +70,54 @@ wait $SWIPE || true
 
 adb logcat -d > "$OUT/logcat.txt"
 
-echo "== checking for crashes =="
-if grep -qE "FATAL EXCEPTION|ANR in $PACKAGE" "$OUT/logcat.txt"; then
-    echo "The app crashed:"
-    grep -A 40 -E "FATAL EXCEPTION" "$OUT/logcat.txt" || true
-    exit 1
-fi
-if grep -qE "Shader compile failed|Program link failed" "$OUT/logcat.txt"; then
-    echo "OpenGL shader problem:"
-    grep -B 2 -A 20 -E "Shader compile failed|Program link failed" "$OUT/logcat.txt"
-    exit 1
-fi
+# Gather the evidence first and write it to a file. Checks come afterwards, so
+# a failing run still explains itself and still produces the previews.
+VERDICT="$OUT/verdict.txt"
+: > "$VERDICT"
 
-echo "== checking the game actually started =="
-grep -E "Racer.*(state ->|racing )" "$OUT/logcat.txt" | tail -20 || true
-
-if ! grep -q "state -> RACING" "$OUT/logcat.txt"; then
-    echo "FAIL: the game never reached RACING — the menu did not respond to the tap."
-    exit 1
-fi
-
-# The car must have moved. This is the end-to-end proof: touch -> physics ->
-# a car with speed on it.
 TOP=$(grep -o "speed=[0-9]*kmh" "$OUT/logcat.txt" | grep -o "[0-9]*" | sort -n | tail -1)
 TOP=${TOP:-0}
-echo "top speed seen in the log: ${TOP} km/h"
-if [ "$TOP" -lt 30 ]; then
-    echo "FAIL: the car never got moving (peak ${TOP} km/h), so the throttle is not reaching the physics."
-    exit 1
-fi
+REACHED_RACING=no
+grep -q "state -> RACING" "$OUT/logcat.txt" && REACHED_RACING=yes
+CRASHED=no
+grep -qE "FATAL EXCEPTION|ANR in $PACKAGE" "$OUT/logcat.txt" && CRASHED=yes
+SHADER=no
+grep -qE "Shader compile failed|Program link failed" "$OUT/logcat.txt" && SHADER=yes
+FOREGROUND=no
+adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
 
-echo "== checking it is still in the foreground =="
-if ! adb shell dumpsys activity activities | grep -q "$PACKAGE"; then
-    echo "The app is no longer running."
-    exit 1
-fi
+{
+    echo "SMOKE crashed=$CRASHED shaderProblem=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
+    echo "SMOKE game log:"
+    grep -E "Racer  *: " "$OUT/logcat.txt" | tail -12 | sed 's/^/SMOKE   /' || true
+    if [ "$CRASHED" = yes ]; then
+        echo "SMOKE crash:"
+        grep -A 12 -E "FATAL EXCEPTION" "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true
+    fi
+    if [ "$REACHED_RACING" = no ]; then
+        echo "SMOKE the menu tap did not start a race; visible text was:"
+        adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
+        adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="[^"]*"' | sort -u | head -20 | sed 's/^/SMOKE   /' || true
+    fi
+} >> "$VERDICT"
 
-echo "== checking the renderer produced a real frame =="
-python3 - "$OUT/02-racing.png" <<'CHECK'
+# Previews are generated unconditionally: a failing run is exactly when someone
+# wants to see the screen.
+python3 scripts/png.py "$OUT/01-menu.png" 128 > "$OUT/preview-menu.txt" || true
+python3 scripts/png.py "$OUT/02-racing.png" 128 > "$OUT/preview.txt" || true
+python3 scripts/png.py "$OUT/03-racing-later.png" 128 > "$OUT/preview-late.txt" || true
+
+echo "== results =="
+cat "$VERDICT"
+
+FAILED=0
+[ "$CRASHED" = yes ] && { echo "FAIL: the app crashed."; FAILED=1; }
+[ "$SHADER" = yes ] && { echo "FAIL: a shader failed to build."; FAILED=1; }
+[ "$REACHED_RACING" = no ] && { echo "FAIL: the game never reached RACING - the menu did not respond."; FAILED=1; }
+[ "$TOP" -lt 30 ] && { echo "FAIL: the car never got moving (peak ${TOP} km/h)."; FAILED=1; }
+[ "$FOREGROUND" = no ] && { echo "FAIL: the app is no longer in the foreground."; FAILED=1; }
+
+python3 - "$OUT/02-racing.png" <<'CHECK' || FAILED=1
 import sys
 sys.path.insert(0, "scripts")
 from png import read_png
@@ -126,10 +136,6 @@ if len(colours) < 6:
 print("OK: the renderer produced a real frame.")
 CHECK
 
-# Emit small previews into the log, so the rendering can be reviewed even when
-# the artifact store is unreachable.
-python3 scripts/png.py "$OUT/01-menu.png" 128 > "$OUT/preview-menu.txt"
-python3 scripts/png.py "$OUT/02-racing.png" 128 > "$OUT/preview.txt"
-python3 scripts/png.py "$OUT/03-racing-later.png" 128 > "$OUT/preview-late.txt"
+[ "$FAILED" -eq 0 ] || exit 1
 
 echo "== smoke test passed =="
