@@ -56,17 +56,21 @@ if ! tap_text "START ENGINE"; then
 fi
 
 # Countdown, then hold the throttle on the right-hand half of the screen.
+# `input swipe` with identical start and end points does not reliably hold a
+# press; explicit motion events do.
 sleep 6
-size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*')
+size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1)
 w=${size%x*}; h=${size#*x}
 if [ "$h" -gt "$w" ]; then t=$w; w=$h; h=$t; fi
-adb shell input swipe $(( w * 4 / 5 )) $(( h / 2 )) $(( w * 4 / 5 )) $(( h / 2 )) 8000 &
-SWIPE=$!
+TX=$(( w * 4 / 5 )); TY=$(( h / 2 ))
+echo "holding the throttle at ${TX},${TY} (screen ${w}x${h})"
+
+adb shell input motionevent DOWN "$TX" "$TY" || adb shell input tap "$TX" "$TY"
 sleep 5
 adb exec-out screencap -p > "$OUT/02-racing.png"
 sleep 4
 adb exec-out screencap -p > "$OUT/03-racing-later.png"
-wait $SWIPE || true
+adb shell input motionevent UP "$TX" "$TY" || true
 
 adb logcat -d > "$OUT/logcat.txt"
 
@@ -89,7 +93,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
 {
     echo "SMOKE crashed=$CRASHED shaderProblem=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
     echo "SMOKE game log:"
-    grep -E "Racer  *: " "$OUT/logcat.txt" | tail -12 | sed 's/^/SMOKE   /' || true
+    grep -E "Racer  *: " "$OUT/logcat.txt" | tail -30 | sed 's/^/SMOKE   /' || true
     if [ "$CRASHED" = yes ]; then
         echo "SMOKE crash:"
         grep -A 12 -E "FATAL EXCEPTION" "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true

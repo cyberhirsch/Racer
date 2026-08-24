@@ -15,7 +15,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -79,31 +78,6 @@ class GameActivity : ComponentActivity() {
             Box(Modifier.fillMaxSize()) {
                 AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
 
-                // Pedals: only while a race is on, and below the HUD's own
-                // controls in z-order so its buttons still win a tap.
-                if (game.state == Game.State.RACING || game.state == Game.State.COUNTDOWN) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val half = size.width / 2f
-                                        var left = false
-                                        var right = false
-                                        for (change in event.changes) {
-                                            if (!change.pressed) continue
-                                            if (change.position.x > half) right = true else left = true
-                                        }
-                                        throttleDown = right
-                                        brakeDown = left
-                                    }
-                                }
-                            }
-                    )
-                }
-
                 Hud(
                     game = game,
                     steering = steering,
@@ -114,7 +88,11 @@ class GameActivity : ComponentActivity() {
                     onNext = { beginRace { game.nextLevel() } },
                     onMenu = { game.toMenu() },
                     onRecentre = { steering.calibrate() },
-                    onInvert = { steering.invert = !steering.invert }
+                    onInvert = { steering.invert = !steering.invert },
+                    onPedals = { throttle, brake ->
+                        throttleDown = throttle
+                        brakeDown = brake
+                    }
                 )
             }
         }

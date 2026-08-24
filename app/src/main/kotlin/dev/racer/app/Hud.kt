@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -61,12 +62,14 @@ fun Hud(
     onNext: () -> Unit,
     onMenu: () -> Unit,
     onRecentre: () -> Unit,
-    onInvert: () -> Unit
+    onInvert: () -> Unit,
+    onPedals: (throttle: Boolean, brake: Boolean) -> Unit
 ) {
     Box(Modifier.fillMaxSize()) {
         when (game.state) {
             Game.State.MENU -> Menu(game, tiltAvailable, onStart)
-            Game.State.COUNTDOWN, Game.State.RACING -> Racing(game, steering, onRecentre, onInvert)
+            Game.State.COUNTDOWN, Game.State.RACING ->
+                Racing(game, steering, onRecentre, onInvert, onPedals)
             Game.State.FINISHED -> Result(game, finished = true, onNext = onNext, onMenu = onMenu)
             Game.State.FAILED -> Result(game, finished = false, onNext = onRetry, onMenu = onMenu)
         }
@@ -76,8 +79,40 @@ fun Hud(
 /* -------------------------------------------------------------------- HUD */
 
 @Composable
-private fun Racing(game: Game, steering: TiltSteering, onRecentre: () -> Unit, onInvert: () -> Unit) {
-    Box(Modifier.fillMaxSize().padding(14.dp)) {
+private fun Racing(
+    game: Game,
+    steering: TiltSteering,
+    onRecentre: () -> Unit,
+    onInvert: () -> Unit,
+    onPedals: (throttle: Boolean, brake: Boolean) -> Unit
+) {
+    // The pedals live on this Box — the same node that draws the GAS and BRAKE
+    // hints — so there is exactly one owner of the gesture. Splitting the
+    // visual from the touch target across separate layers makes which one
+    // actually receives a press a matter of z-order luck.
+    //
+    // The HUD's own buttons are children of this Box and are hit-tested first,
+    // so CENTRE and INVERT still work.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val half = size.width / 2f
+                        var left = false
+                        var right = false
+                        for (change in event.changes) {
+                            if (!change.pressed) continue
+                            if (change.position.x > half) right = true else left = true
+                        }
+                        onPedals(right, left)
+                    }
+                }
+            }
+            .padding(14.dp)
+    ) {
 
         // Pedal hints, so it is obvious which half does what.
         Row(Modifier.fillMaxSize()) {

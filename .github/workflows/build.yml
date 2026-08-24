@@ -136,9 +136,10 @@ jobs:
       - name: Print result and screenshot previews
         if: always()
         run: |
-          cat smoke-output/verdict.txt || true
           cat smoke-output/preview-menu.txt || true
           cat smoke-output/preview.txt || true
+          # Last, so a log window that keeps only the tail still shows it.
+          cat smoke-output/verdict.txt || true
 
   release:
     name: Publish release
