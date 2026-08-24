@@ -118,6 +118,15 @@ jobs:
           disable-animations: true
           script: ./scripts/smoke-test.sh
 
+      # The artifact store is not reachable from every environment, so also
+      # print a downscaled screenshot into the log, where anyone reading the
+      # run can decode it and look at the rendering.
+      - name: Print screenshot previews
+        if: always()
+        run: |
+          cat smoke-output/preview-menu.txt || true
+          cat smoke-output/preview.txt || true
+
       - name: Upload screenshots and logs
         if: always()
         uses: actions/upload-artifact@v4

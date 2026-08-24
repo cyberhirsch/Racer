@@ -61,64 +61,30 @@ fi
 # racing shot against the sky colour and the dark menu background: a live frame
 # has road, car and HUD in it, so it must have a decent spread of colours.
 echo "== checking the renderer produced a real frame =="
-python3 - "$OUT/02-racing.png" <<'PY'
-import struct, sys, zlib
+# A blank screenshot means the renderer drew nothing. A live frame has road,
+# car and HUD in it, so it must contain a decent spread of colours.
+python3 - "$OUT/02-racing.png" <<'CHECK'
+import sys
+sys.path.insert(0, "scripts")
+from png import read_png
 
-path = sys.argv[1]
-data = open(path, 'rb').read()
-assert data[:8] == b'\x89PNG\r\n\x1a\n', "not a PNG"
-
-pos, idat, width, height, bitdepth, colortype = 8, b'', 0, 0, 0, 0
-while pos < len(data):
-    length = struct.unpack('>I', data[pos:pos+4])[0]
-    tag = data[pos+4:pos+8]
-    chunk = data[pos+8:pos+8+length]
-    if tag == b'IHDR':
-        width, height, bitdepth, colortype = struct.unpack('>IIBB', chunk[:10])
-    elif tag == b'IDAT':
-        idat += chunk
-    pos += 12 + length
-
-channels = {0: 1, 2: 3, 4: 2, 6: 4}[colortype]
-assert bitdepth == 8, f"unexpected bit depth {bitdepth}"
-raw = zlib.decompress(idat)
-stride = width * channels
-
-# Undo the PNG row filters.
-out = bytearray()
-prev = bytearray(stride)
-i = 0
-for _ in range(height):
-    f = raw[i]; i += 1
-    line = bytearray(raw[i:i+stride]); i += stride
-    for x in range(stride):
-        a = line[x-channels] if x >= channels else 0
-        b = prev[x]
-        c = prev[x-channels] if x >= channels else 0
-        if f == 1: line[x] = (line[x] + a) & 0xFF
-        elif f == 2: line[x] = (line[x] + b) & 0xFF
-        elif f == 3: line[x] = (line[x] + (a + b) // 2) & 0xFF
-        elif f == 4:
-            p = a + b - c
-            pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
-            pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-            line[x] = (line[x] + pr) & 0xFF
-    out += line
-    prev = line
-
-# Sample a grid of pixels and count distinct coarse colours.
+width, height, channels, pixels = read_png(sys.argv[1])
 colours = set()
-step = max(1, height // 60)
-for y in range(0, height, step):
+for y in range(0, height, max(1, height // 60)):
     for x in range(0, width, max(1, width // 60)):
-        o = y * stride + x * channels
-        colours.add((out[o] // 24, out[o+1] // 24, out[o+2] // 24))
+        o = (y * width + x) * channels
+        colours.add((pixels[o] // 24, pixels[o + 1] // 24, pixels[o + 2] // 24))
 
 print(f"{width}x{height}, {len(colours)} distinct colours sampled")
 if len(colours) < 6:
-    print("FAIL: the frame is nearly blank — the renderer drew nothing.")
+    print("FAIL: the frame is nearly blank - the renderer drew nothing.")
     sys.exit(1)
 print("OK: the renderer produced a real frame.")
-PY
+CHECK
+
+# Emit a small preview into the log, so the rendering can be reviewed even when
+# the artifact store is unreachable.
+python3 scripts/png.py "$OUT/02-racing.png" 200 > "$OUT/preview.txt"
+python3 scripts/png.py "$OUT/01-after-start.png" 160 > "$OUT/preview-menu.txt"
 
 echo "== smoke test passed =="
