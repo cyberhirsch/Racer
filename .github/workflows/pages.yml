@@ -30,8 +30,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install a browser
-        run: npx --yes playwright@1.49.0 install --with-deps chromium
+      # `npx playwright install` only downloads the browser; the check script
+      # imports the playwright module too, so it has to be installed.
+      - name: Install Playwright and a browser
+        run: |
+          npm install --prefix web
+          npx --prefix web playwright install --with-deps chromium
 
       # Deploying a broken page is worse than not deploying: load the site,
       # start a race, and check the car actually moves.
