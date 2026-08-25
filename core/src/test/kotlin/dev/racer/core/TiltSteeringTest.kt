@@ -134,20 +134,26 @@ class TiltSteeringTest {
         assertTrue("anticlockwise should steer left, got ${t.steer}", t.steer < -0.1)
     }
 
-    /** The horizon is not a preference: inverting the steering must not flip it. */
+    /**
+     * The camera has to turn back by the amount the phone turned, so the view
+     * roll opposes the phone's rotation. The horizon is also not a preference:
+     * inverting the steering must not flip it.
+     */
     @Test
-    fun `the view roll follows the phone and ignores the invert setting`() {
+    fun `the view roll opposes the phone and ignores the invert setting`() {
         val t = TiltSteering()
         val (nx, ny) = gravityFor(0.0)
         t.onGravity(nx, ny, 0); t.calibrate()
 
         val (gx, gy) = gravityFor(0.4)
         t.onGravity(gx, gy, 0)
-        assertEquals(0.4, t.viewRoll, 1e-9)
+        assertEquals(0.4, t.rollFromNeutral, 1e-9)
+        assertEquals("the view must roll against the phone, not with it",
+            -0.4, t.viewRoll, 1e-9)
 
         t.invert = true
         assertEquals("inverting the steering must not roll the horizon the other way",
-            0.4, t.viewRoll, 1e-9)
+            -0.4, t.viewRoll, 1e-9)
     }
 
     @Test

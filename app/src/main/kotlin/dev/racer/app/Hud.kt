@@ -29,7 +29,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Brush
@@ -253,11 +255,53 @@ private fun Racing(
             )
         }
 
-        game.countdownLabel?.let { n ->
+        Countdown(game)
+    }
+}
+
+/**
+ * The starting lights.
+ *
+ * The number used to be a bare white glyph dropped on the middle of the track
+ * — over a pale kerb or the sky it was barely there, and it shared the centre
+ * of the screen with everything else the HUD draws. It now dims the scene
+ * behind it, sits in its own disc, and pops on each new count, so there is no
+ * question which second you are on.
+ *
+ * The scale and fade come from the fractional part of the count rather than an
+ * animation: the HUD already recomposes every frame, and driving it from the
+ * clock the game itself is using keeps the pop exactly on the beat.
+ */
+@Composable
+private fun Countdown(game: Game) {
+    val n = game.countdownLabel ?: return
+    val go = n == 0
+
+    // How far through the current second we are, 0 at the moment it changes.
+    val into = (1.0 - (game.countdown - kotlin.math.floor(game.countdown))).toFloat()
+    val pop = 1f + 0.35f * (1f - (into * 3.2f).coerceIn(0f, 1f))
+    val fade = (1f - (into - 0.75f) * 3f).coerceIn(0.25f, 1f)
+
+    Box(
+        Modifier.fillMaxSize().background(Color(0x66000000)),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+                .scale(pop)
+                .alpha(fade)
+                .size(if (go) 200.dp else 140.dp, 140.dp)
+                .clip(RoundedCornerShape(70.dp))
+                .background(if (go) Red else Color(0xCC0A0C10))
+                .border(3.dp, if (go) Color.White else Red, RoundedCornerShape(70.dp)),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                if (n > 0) "$n" else "GO!",
-                color = Color.White, fontSize = 84.sp, fontWeight = FontWeight.Black,
-                modifier = Modifier.align(Alignment.Center)
+                if (go) "GO!" else "$n",
+                color = Color.White,
+                fontSize = if (go) 56.sp else 84.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = if (go) 4.sp else 0.sp
             )
         }
     }

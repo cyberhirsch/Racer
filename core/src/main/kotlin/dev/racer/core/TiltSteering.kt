@@ -116,9 +116,15 @@ class TiltSteering(
      * How far to roll the camera so the horizon stays level.
      *
      * The screen is physically rotated by the player, so the rendered image is
-     * rotated with it; the view has to turn back by the same amount. Not
-     * affected by [invert], which is a steering preference — the horizon is
-     * not a matter of taste.
+     * rotated with it; the view has to turn back by the same amount, which is
+     * why this is the negative of the phone's own rotation. Not affected by
+     * [invert], which is a steering preference — the horizon is not a matter
+     * of taste.
+     *
+     * The sign here is the one thing in the file that cannot be derived from
+     * the maths alone: it depends on which way round the rendered frame sits
+     * on the glass. It was wrong in both directions before settling here, each
+     * time corrected against what the phone actually showed.
      */
-    val viewRoll: Double get() = rollFromNeutral
+    val viewRoll: Double get() = -rollFromNeutral
 }

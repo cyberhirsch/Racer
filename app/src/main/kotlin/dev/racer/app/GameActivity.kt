@@ -18,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import dev.racer.core.Game
 import dev.racer.core.Input
+import dev.racer.core.Spec
 import dev.racer.core.TiltSteering
 
 /**
@@ -36,6 +37,7 @@ class GameActivity : ComponentActivity() {
     private lateinit var surface: GLSurfaceView
     private lateinit var renderer: GlRenderer
     private lateinit var tiltSensor: TiltSensor
+    private val engine = EngineSound()
 
     private val steering = TiltSteering()
     private lateinit var game: Game
@@ -48,6 +50,10 @@ class GameActivity : ComponentActivity() {
 
     private var lastLoggedState: Game.State? = null
     private var logTimer = 0.0
+
+    /** Decaying blip that revs the engine on each beat of the countdown. */
+    private var revBlip = 0.0
+    private var lastCount: Int? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -114,10 +120,42 @@ class GameActivity : ComponentActivity() {
         val wasRacing = game.state == Game.State.RACING
         game.update(dt, Input(throttle, brake, steer))
 
+        updateEngineSound(dt)
+
         if (wasRacing && game.lastImpact > 6.0) vibrate(40)
         if (wasRacing && game.state == Game.State.FINISHED) vibrate(120)
 
         logProgress(dt)
+    }
+
+    /**
+     * Feed the engine synth.
+     *
+     * While racing it simply follows the crank. On the grid there is nothing
+     * for it to follow — the car is stationary and the physics is not running
+     * — so each beat of the countdown throws a blip of throttle at it, which
+     * decays like a real one: the driver sits there revving it while the
+     * lights come down.
+     */
+    private fun updateEngineSound(dt: Double) {
+        val counting = game.state == Game.State.COUNTDOWN
+        if (counting) {
+            val count = game.countdownLabel
+            if (count != null && count != lastCount) {
+                lastCount = count
+                // The last beat is 'go': hold the revs rather than let them drop.
+                revBlip = if (count == 0) 1.0 else 0.85
+            }
+            revBlip = (revBlip - dt * 1.6).coerceAtLeast(0.0)
+            engine.rpm = Spec.IDLE_RPM + (Spec.REDLINE - Spec.IDLE_RPM) * 0.72 * revBlip
+            engine.throttle = revBlip
+        } else {
+            lastCount = null
+            revBlip = 0.0
+            engine.rpm = game.vehicle.rpm
+            engine.throttle = throttle
+        }
+        engine.running = counting || game.state == Game.State.RACING
     }
 
     /**
@@ -143,6 +181,7 @@ class GameActivity : ComponentActivity() {
                         "fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
                         "cp=${game.nextCheckpoint}/${game.checkpointTotal} " +
                         "throttle=${"%.2f".format(throttle)} steer=${"%.2f".format(steering.steer)} " +
+                        "phoneRoll=${"%.1f".format(Math.toDegrees(steering.rollFromNeutral))} " +
                         "viewRoll=${"%.1f".format(Math.toDegrees(steering.viewRoll))}"
                 )
             }
@@ -182,12 +221,15 @@ class GameActivity : ComponentActivity() {
         super.onResume()
         surface.onResume()
         tiltSensor.start()
+        engine.start()
     }
 
     override fun onPause() {
         super.onPause()
         surface.onPause()
         tiltSensor.stop()
+        engine.running = false
+        engine.stop()
         throttleDown = false
         brakeDown = false
     }

@@ -106,11 +106,16 @@ adb emu sensor set acceleration "$GRAVITY" || echo "could not drive the emulator
 sleep 3
 adb exec-out screencap -p > "$OUT/04-rolled.png"
 # Read the roll the app had at this moment, before the sensor goes back.
-APP_ROLL=$(adb logcat -d | grep -o "viewRoll=[-0-9.]*" | tail -1 | cut -d= -f2)
+# phoneRoll is how far the phone is turned; the camera roll is the negative of
+# it, which is the whole point of the check below.
+APP_ROLL=$(adb logcat -d | grep -o "phoneRoll=[-0-9.]*" | tail -1 | cut -d= -f2)
 APP_ROLL=${APP_ROLL:-0}
-# The largest roll the renderer actually drew with while the phone was tilted.
-DRAW_ROLL=$(adb logcat -d | grep -o "draw roll=[-0-9.]* deg" | grep -o "[-0-9.]*" \
-    | sort -g | tail -1)
+# The furthest the renderer actually rolled while the phone was tilted. Picked
+# by size rather than by value: the camera rolls the opposite way to the phone,
+# so the interesting frame is the most negative one, and sorting either end
+# would silently pick the wrong frame if the sign ever flipped again.
+DRAW_ROLL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 \
+    | python3 -c "import sys; v=[float(x) for x in sys.stdin if x.strip()]; print(max(v, key=abs) if v else 0)")
 DRAW_ROLL=${DRAW_ROLL:-0}
 echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg"
 
@@ -118,8 +123,7 @@ echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg
 adb emu sensor set acceleration 0:9.81:0 || true
 sleep 4
 adb exec-out screencap -p > "$OUT/05-level.png"
-DRAW_ROLL_LEVEL=$(adb logcat -d | grep -o "draw roll=[-0-9.]* deg" | grep -o "[-0-9.]*" \
-    | tail -1)
+DRAW_ROLL_LEVEL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 | tail -1)
 DRAW_ROLL_LEVEL=${DRAW_ROLL_LEVEL:-99}
 echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 
@@ -156,7 +160,8 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
         grep -A 12 -E "FATAL EXCEPTION" "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true
     fi
     echo "SMOKE on screen during the race: $ON_SCREEN"
-    echo "SMOKE tilt: injected ${ROLL_DEG} deg -> app read ${APP_ROLL} deg -> renderer drew ${DRAW_ROLL} deg"
+    echo "SMOKE tilt: injected ${ROLL_DEG} deg -> app read ${APP_ROLL} deg -> renderer drew ${DRAW_ROLL} deg (must oppose)"
+    echo "SMOKE audio: $(grep -c "engine audio started" "$OUT/logcat.txt") engine synth start(s)"
     echo "SMOKE tilt: upright -> renderer drew ${DRAW_ROLL_LEVEL} deg"
     echo "SMOKE horizon in frame (informational; barriers and fog make this noisy):"
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
@@ -200,18 +205,21 @@ if abs(app - injected) > 6:
     print(f"FAIL: the app read {app:.1f} deg from a {injected:.0f} deg tilt.")
     sys.exit(1)
 
-# Same sign and roughly the same size: a mirrored roll would tilt the world the
-# wrong way and make the horizon worse, not better.
-if abs(drew - injected) > 8:
-    print(f"FAIL: the renderer drew with {drew:.1f} deg for a {injected:.0f} deg tilt "
-          f"(a mirrored sign would show here as {-injected:.0f}).")
+# The camera must roll AGAINST the phone. Turning the phone clockwise by 25
+# degrees has to roll the view 25 degrees anticlockwise, or the horizon tips
+# twice as far instead of standing still — which is exactly what shipped, and
+# was reported from a real device.
+if abs(drew + injected) > 8:
+    print(f"FAIL: the renderer drew with {drew:.1f} deg for a {injected:.0f} deg phone "
+          f"roll; it should be about {-injected:.0f} deg. Rolling the camera the same "
+          f"way as the phone doubles the tilt instead of cancelling it.")
     sys.exit(1)
 
 if abs(level) > 6:
     print(f"FAIL: with the phone upright the renderer still drew a {level:.1f} deg roll.")
     sys.exit(1)
 
-print("OK: a real tilt reaches the renderer, with the right sign and size.")
+print("OK: a real tilt reaches the renderer, and the camera rolls against it.")
 TILT
 
 [ "$FAILED" -eq 0 ] || exit 1
