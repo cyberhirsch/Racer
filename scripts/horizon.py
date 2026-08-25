@@ -63,33 +63,46 @@ def describe(width, height, channels, pixels):
 
 def fit_angle(points):
     """
-    Least-squares slope, after throwing out points far from the median.
+    Least-squares slope, refined by throwing out points far from the line.
 
-    HUD chips and the odd piece of scenery poke into the sky, so a plain fit
-    gets dragged around by them.
+    The rejection has to be measured against the fitted line, not against the
+    median height: a horizon rolled 25 degrees crosses a phone screen top to
+    bottom, so "far from the average height" describes almost all of it.
     """
     import math
 
-    if len(points) < 20:
-        raise SystemExit("FAIL: could not find the horizon (too few points)")
+    kept = list(points)
+    slope = intercept = 0.0
+    for _ in range(4):
+        n = len(kept)
+        if n < 15:
+            raise SystemExit("FAIL: too few horizon points survived the fit")
+        mx = sum(p[0] for p in kept) / n
+        my = sum(p[1] for p in kept) / n
+        num = sum((p[0] - mx) * (p[1] - my) for p in kept)
+        den = sum((p[0] - mx) ** 2 for p in kept)
+        if den == 0:
+            raise SystemExit("FAIL: degenerate horizon fit")
+        slope = num / den
+        intercept = my - slope * mx
+        residuals = sorted(abs(p[1] - (slope * p[0] + intercept)) for p in kept)
+        # Keep everything within a few times the typical error, so scenery
+        # poking through the skyline is dropped but the line itself is not.
+        limit = max(6.0, residuals[len(residuals) // 2] * 4)
+        trimmed = [p for p in kept if abs(p[1] - (slope * p[0] + intercept)) <= limit]
+        if len(trimmed) == len(kept):
+            break
+        kept = trimmed
+
+    return math.degrees(math.atan(slope)), len(kept), int(intercept)
 
 
-    ys = sorted(p[1] for p in points)
-    median = ys[len(ys) // 2]
-    spread = max(12, int(len(ys) * 0.02) + 12)
-    kept = [p for p in points if abs(p[1] - median) < spread * 4]
-    if len(kept) < 20:
-        raise SystemExit("FAIL: the horizon is too broken up to measure")
-
-    n = len(kept)
-    mx = sum(p[0] for p in kept) / n
-    my = sum(p[1] for p in kept) / n
-    num = sum((p[0] - mx) * (p[1] - my) for p in kept)
-    den = sum((p[0] - mx) ** 2 for p in kept)
-    if den == 0:
-        raise SystemExit("FAIL: degenerate horizon fit")
-    slope = num / den
-    return math.degrees(math.atan(slope)), n, median
+def samples(points, count=8):
+    """A few boundary points across the frame, for when a fit looks wrong."""
+    if not points:
+        return ""
+    step = max(1, len(points) // count)
+    return " ".join(f"({p[0]},{p[1]})" for p in points[::step][:count])
 
 
 if __name__ == "__main__":
@@ -99,5 +112,6 @@ if __name__ == "__main__":
         print(f"HORIZON none ({len(points)} sky points in {width}x{height}); "
               f"samples: {describe(width, height, channels, pixels)}")
         raise SystemExit(1)
-    angle, used, median = fit_angle(points)
-    print(f"HORIZON {angle:+.1f} deg (from {used} points, mean height {median}/{height})")
+    angle, used, _ = fit_angle(points)
+    print(f"HORIZON {angle:+.1f} deg (from {used}/{len(points)} points in {width}x{height}; "
+          f"boundary {samples(points)})")
