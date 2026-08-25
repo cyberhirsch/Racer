@@ -9,6 +9,7 @@ import android.os.VibratorManager
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
@@ -48,6 +49,23 @@ class GameActivity : ComponentActivity() {
     private var throttle = 0.0
     private var brake = 0.0
 
+    /**
+     * Tells the HUD the game has moved on.
+     *
+     * Pushed from the physics thread rather than pulled from Compose's frame
+     * clock, which was tried twice and left the HUD drawing the numbers it
+     * started with for a whole race.
+     *
+     * Two things keep this from repeating the original mistake, where a post
+     * per frame grew a queue the main thread could never drain: it is capped
+     * at twenty a second, and a new post is not made while one is still
+     * waiting, so a slow device simply gets fewer updates instead of a
+     * backlog.
+     */
+    private val uiTick = mutableIntStateOf(0)
+    private val tickPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var tickTimer = 0.0
+
     private var lastLoggedState: Game.State? = null
     private var logTimer = 0.0
 
@@ -77,6 +95,7 @@ class GameActivity : ComponentActivity() {
 
                 Hud(
                     game = game,
+                    tick = uiTick,
                     steering = steering,
                     tiltAvailable = tiltSensor.available,
                     onStart = { level -> beginRace { game.loadLevel(level); game.startCountdown() } },
@@ -127,7 +146,19 @@ class GameActivity : ComponentActivity() {
 
         if (wasRacing && game.state == Game.State.FINISHED) vibrate(120)
 
+        pokeHud(dt)
         logProgress(dt)
+    }
+
+    private fun pokeHud(dt: Double) {
+        tickTimer += dt
+        if (tickTimer < HUD_INTERVAL) return
+        tickTimer = 0.0
+        if (!tickPending.compareAndSet(false, true)) return
+        runOnUiThread {
+            tickPending.set(false)
+            uiTick.intValue++
+        }
     }
 
     /**
@@ -238,5 +269,8 @@ class GameActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "Racer"
+
+        /** Twenty HUD updates a second: past that nobody reads the digits. */
+        const val HUD_INTERVAL = 1.0 / 20.0
     }
 }

@@ -22,15 +22,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -59,38 +56,6 @@ private val Muted = Color(0xFF93A0AE)
 private val Panel = Color(0xE60E1118)
 
 /**
- * A counter that advances once per rendered frame.
- *
- * The game state lives outside Compose, so the HUD needs something to tell it
- * to look again. This is driven by Compose's frame clock: `withFrameNanos`
- * suspends until the next frame, so exactly one update happens per frame and
- * late frames simply delay the next one.
- *
- * The state is handed back rather than read here, and that is the whole point.
- * Compose subscribes the composable that *reads* a state, so reading it inside
- * this function invalidated only this function — [Hud] itself was never marked
- * for recomposition and went on drawing a stale frame. The race was live
- * underneath it: the screen showed 0 km/h and 2.25 kg while the game was doing
- * 123 km/h on 2.02 kg, and the countdown never counted.
- *
- * Posting an update per frame from the render thread instead (runOnUiThread)
- * is what froze the HUD outright: on a slow device each recomposition takes
- * longer than a frame, the queue grows without bound, and the main thread
- * never catches up.
- */
-@Composable
-private fun rememberFrameTicker(): MutableIntState {
-    val tick = remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            withFrameNanos { }
-            tick.intValue++
-        }
-    }
-    return tick
-}
-
-/**
  * The heads-up display and menus.
  *
  * Everything is read straight off the game, refreshed once per frame.
@@ -98,6 +63,7 @@ private fun rememberFrameTicker(): MutableIntState {
 @Composable
 fun Hud(
     game: Game,
+    tick: MutableIntState,
     steering: TiltSteering,
     tiltAvailable: Boolean,
     onStart: (Int) -> Unit,
@@ -109,10 +75,17 @@ fun Hud(
     onPedals: (throttle: Float, brake: Boolean) -> Unit
 ) {
     // Read the tick here, so it is this composable that Compose marks for
-    // recomposition each frame — and pass it down, so the racing HUD cannot be
-    // skipped either. The GL surface beside it has no changing input and is
-    // left alone.
-    val frame = rememberFrameTicker().intValue
+    // recomposition when the game moves on — and pass it down, so the racing
+    // HUD cannot be skipped either. The GL surface beside it has no changing
+    // input and is left alone.
+    //
+    // The tick is pushed by the game thread rather than pulled from Compose's
+    // frame clock. Two attempts at pulling it have now failed on a real
+    // device: the first read the state in the wrong scope, and the second,
+    // which read it here, still left the HUD drawing its opening numbers all
+    // race. Something stops that clock; what it is does not matter as much as
+    // this not depending on it.
+    val frame = tick.intValue
 
     Box(Modifier.fillMaxSize()) {
         when (game.state) {
