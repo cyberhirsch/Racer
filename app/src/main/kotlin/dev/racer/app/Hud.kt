@@ -140,6 +140,13 @@ private fun Racing(
     // composable: the game state it draws lives outside Compose and changes
     // without notice, so the only thing that can force a redraw is a parameter
     // that differs every frame.
+    //
+    // And once a second, the HUD says what it is drawing. Nothing else can:
+    // the accessibility tree that a screen dump reads lags behind the display,
+    // so it reports a stale HUD and a live one identically. This line comes
+    // from the composition itself, so if it stops moving while the game log
+    // does not, the display really has frozen.
+    reportWhatIsDrawn(game)
     Box(Modifier.fillMaxSize().padding(14.dp)) {
 
         // Top: level, time, checkpoints, progress.
@@ -260,6 +267,26 @@ private fun Racing(
         }
 
         Countdown(game, Modifier.align(Alignment.TopEnd))
+    }
+}
+
+/**
+ * Log the numbers the HUD is currently drawing, about once a second.
+ *
+ * Called from composition, so it only happens when the HUD actually
+ * recomposes — which is the thing being reported.
+ */
+@Composable
+private fun reportWhatIsDrawn(game: Game) {
+    val last = remember { longArrayOf(0L) }
+    val now = System.nanoTime()
+    if (now - last[0] > 1_000_000_000L) {
+        last[0] = now
+        android.util.Log.i(
+            "Racer",
+            "hud speed=${game.speedKmh}kmh fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
+                "countdown=${game.countdownLabel ?: "-"}"
+        )
     }
 }
 
