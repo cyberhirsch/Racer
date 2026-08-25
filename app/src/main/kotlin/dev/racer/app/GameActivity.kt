@@ -158,6 +158,14 @@ class GameActivity : ComponentActivity() {
         runOnUiThread {
             tickPending.set(false)
             uiTick.intValue++
+            // A snapshot write made outside composition is only seen once it
+            // has been announced. Compose normally does this itself on the
+            // next frame; saying so directly costs nothing and does not depend
+            // on that frame arriving.
+            androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+            if (uiTick.intValue % 20 == 0) {
+                Log.i(TAG, "ui thread ran, tick=${uiTick.intValue}")
+            }
         }
     }
 

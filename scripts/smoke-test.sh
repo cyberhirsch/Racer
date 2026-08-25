@@ -198,6 +198,8 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     fi
     echo "SMOKE on screen during the race: $ON_SCREEN"
     echo "SMOKE hud drew ${HUD_FUEL}kg vs game fuel=${LOG_FUEL}kg (the HUD must not be stale)"
+    echo "SMOKE what the HUD drew, and whether the main thread was running:"
+    grep -oE "hud speed=.*|ui thread ran, tick=[0-9]+" "$OUT/logcat.txt" | tail -8 | sed 's/^/SMOKE   /' || true
     echo "SMOKE tilt: injected ${ROLL_DEG} deg -> app read ${APP_ROLL} deg -> renderer drew ${DRAW_ROLL} deg (must oppose)"
     echo "SMOKE audio: $(grep -c "engine audio started" "$OUT/logcat.txt") engine synth start(s)"
     echo "SMOKE tilt: upright -> renderer drew ${DRAW_ROLL_LEVEL} deg"

@@ -103,23 +103,24 @@ fun Hud(
 @Composable
 private fun Racing(
     game: Game,
-    @Suppress("UNUSED_PARAMETER") frame: Int,
+    frame: Int,
     steering: TiltSteering,
     onRecentre: () -> Unit,
     onInvert: () -> Unit,
     onPedals: (throttle: Float, brake: Boolean) -> Unit
 ) {
-    // `frame` is never read. It is here so that Compose cannot skip this
-    // composable: the game state it draws lives outside Compose and changes
-    // without notice, so the only thing that can force a redraw is a parameter
-    // that differs every frame.
+    // `frame` exists so that Compose cannot skip this composable: the game
+    // state it draws lives outside Compose and changes without notice, so the
+    // only thing that can force a redraw is a parameter that differs each
+    // time. It is also reported below, which is how a HUD that never
+    // recomposed can be told from one that recomposed with stale numbers.
     //
     // And once a second, the HUD says what it is drawing. Nothing else can:
     // the accessibility tree that a screen dump reads lags behind the display,
     // so it reports a stale HUD and a live one identically. This line comes
     // from the composition itself, so if it stops moving while the game log
     // does not, the display really has frozen.
-    reportWhatIsDrawn(game)
+    reportWhatIsDrawn(game, frame)
     Box(Modifier.fillMaxSize().padding(14.dp)) {
 
         // Top: level, time, checkpoints, progress.
@@ -250,7 +251,7 @@ private fun Racing(
  * recomposes — which is the thing being reported.
  */
 @Composable
-private fun reportWhatIsDrawn(game: Game) {
+private fun reportWhatIsDrawn(game: Game, tick: Int) {
     val last = remember { longArrayOf(0L) }
     val now = System.nanoTime()
     if (now - last[0] > 1_000_000_000L) {
@@ -258,7 +259,7 @@ private fun reportWhatIsDrawn(game: Game) {
         android.util.Log.i(
             "Racer",
             "hud speed=${game.speedKmh}kmh fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
-                "countdown=${game.countdownLabel ?: "-"}"
+                "countdown=${game.countdownLabel ?: "-"} tick=$tick"
         )
     }
 }
