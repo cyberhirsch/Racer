@@ -54,7 +54,8 @@ class GameActivity : ComponentActivity() {
      *
      * Pushed from the physics thread rather than pulled from Compose's frame
      * clock, which was tried twice and left the HUD drawing the numbers it
-     * started with for a whole race.
+     * started with for a whole race. See the snapshot notification below,
+     * without which pushing does not work either.
      *
      * Two things keep this from repeating the original mistake, where a post
      * per frame grew a queue the main thread could never drain: it is capped
@@ -158,10 +159,14 @@ class GameActivity : ComponentActivity() {
         runOnUiThread {
             tickPending.set(false)
             uiTick.intValue++
-            // A snapshot write made outside composition is only seen once it
-            // has been announced. Compose normally does this itself on the
-            // next frame; saying so directly costs nothing and does not depend
-            // on that frame arriving.
+            // Load-bearing. A snapshot write made outside composition is only
+            // seen once it has been announced, and Compose normally does that
+            // itself on its next frame — which, in this app, does not come:
+            // three attempts at driving the HUD from the frame clock all left
+            // it drawing the numbers it started the race with. Announcing the
+            // write here is what actually makes the display follow the game.
+            // Remove this line and the HUD freezes and the countdown stops
+            // counting, with nothing else to show for it.
             androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
             if (uiTick.intValue % 20 == 0) {
                 Log.i(TAG, "ui thread ran, tick=${uiTick.intValue}")
