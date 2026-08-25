@@ -114,16 +114,4 @@ class VehicleTest {
         assertTrue(engineTorque(Spec.TORQUE_PEAK_RPM) >= engineTorque(14000.0))
         assertEquals(0.0, engineTorque(Spec.REDLINE + 100), 0.0)
     }
-
-    @Test
-    fun `a barrier impact kills speed rather than adding it`() {
-        val v = Vehicle().apply { fuel = 100.0; vx = 50.0 }
-        v.step(h, Input())
-        val before = v.speed
-        // Wall on the right, normal pointing back left toward the centreline.
-        v.collide(-1.0, 0.0, 0.1)
-        val after = kotlin.math.hypot(v.vx, v.vy)
-        println("impact: %.1f -> %.1f m/s".format(before, after))
-        assertTrue("speed rose after impact", after <= before + 1e-6)
-    }
 }

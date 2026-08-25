@@ -29,7 +29,6 @@ object Autopilot {
         val finished: Boolean,
         val time: Double,
         val fuelUsed: Double,
-        val wallHits: Int,
         val offTrackTime: Double,
         val topSpeed: Double
     ) {
@@ -55,7 +54,7 @@ object Autopilot {
     private const val TOP_SPEED_TARGET = 110.0
 
     /** Take corners under the theoretical limit, like a human. */
-    var cornerSpeedMargin = 0.76
+    var cornerSpeedMargin = 0.70
 
     // Exposed as vars so the tuning sweep in the tests can search them.
     var headingGain = 0.8
@@ -141,7 +140,7 @@ object Autopilot {
      *
      * Evaluating grip at the *current* speed instead — which is much higher on
      * the approach — overestimates the corner speed badly and puts the car in
-     * the barrier. If the denominator is non-positive, downforce grows faster
+     * the corner. If the denominator is non-positive, downforce grows faster
      * than the demand and the corner is flat out.
      */
     fun cornerSpeed(k: Double): Double {
@@ -166,7 +165,6 @@ object Autopilot {
         var steer = 0.0
         var t = 0.0
         var next = 0
-        var hits = 0
         var offTrackTime = 0.0
         var topSpeed = 0.0
 
@@ -179,7 +177,6 @@ object Autopilot {
             v.gripScale = surf.grip
             if (surf.offTrack) offTrackTime += H
             v.step(H, inp)
-            surf.hit?.let { v.collide(it.nx, it.nz, it.penetration + 0.02); hits++ }
 
             val loc = track.locate(v.x, v.z, hint)
             val n = track.frames.size - 1
@@ -190,7 +187,7 @@ object Autopilot {
             if (v.fuel <= 0) break
         }
 
-        return Result(cfg, track, next >= track.checkpoints.size, t, v.fuelUsed, hits, offTrackTime, topSpeed)
+        return Result(cfg, track, next >= track.checkpoints.size, t, v.fuelUsed, offTrackTime, topSpeed)
     }
 
     /**

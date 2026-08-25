@@ -25,16 +25,19 @@ class AutopilotTest {
             avgSpeeds += r.avgSpeed
 
             println(
-                "%-4d %-21s %5.0fm %6.1fs %5.0f %6.0f %6.2fkg %6.2fkg %6.2fx %4d %5.1fs %6.0fm".format(
+                "%-4d %-21s %5.0fm %6.1fs %5.0f %6.0f %6.2fkg %6.2fkg %6.2fx %5.1fs %6.0fm".format(
                     i + 1, cfg.name, r.track.length, r.time, r.avgSpeed * 3.6,
                     r.topSpeed * 3.6, r.fuelUsed, cfg.fuel, margin,
-                    r.wallHits, r.offTrackTime, r.track.tightestRadius
+                    r.offTrackTime, r.track.tightestRadius
                 )
             )
 
             assertTrue("level ${i + 1} (${cfg.name}) could not be completed", r.finished)
-            assertTrue("level ${i + 1} took ${r.wallHits} wall hits — the circuit is not cleanly drivable",
-                r.wallHits <= 8)
+            // Nothing stops a car leaving the circuit any more, so time spent
+            // off it is the measure of whether the corners can actually be
+            // taken: a lap driven mostly on the grass is not a drivable one.
+            assertTrue("level ${i + 1} spent ${r.offTrackTime}s off the circuit — it is not cleanly drivable",
+                r.offTrackTime < r.time * 0.25)
 
             // The tank must be enough for a clean lap, but not so generous that
             // fuel stops being the challenge.
@@ -58,8 +61,8 @@ class AutopilotTest {
     fun `the endless levels past the built-in set stay completable`() {
         for (i in Levels.BUILT_IN.size until Levels.BUILT_IN.size + 4) {
             val r = Autopilot.simulate(i)
-            println("%-22s %5.0fm %6.1fs avg %3.0f km/h  fuel %.2f/%.2fkg  hits %d".format(
-                r.cfg.name, r.track.length, r.time, r.avgSpeed * 3.6, r.fuelUsed, r.cfg.fuel, r.wallHits))
+            println("%-22s %5.0fm %6.1fs avg %3.0f km/h  fuel %.2f/%.2fkg  off %.1fs".format(
+                r.cfg.name, r.track.length, r.time, r.avgSpeed * 3.6, r.fuelUsed, r.cfg.fuel, r.offTrackTime))
             assertTrue("${r.cfg.name} could not be completed", r.finished)
             assertTrue("${r.cfg.name} tank cannot cover a clean lap", r.cfg.fuel / r.fuelUsed > 1.1)
         }

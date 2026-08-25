@@ -42,8 +42,8 @@ class GameActivity : ComponentActivity() {
     private val steering = TiltSteering()
     private lateinit var game: Game
 
-    /** Screen halves: right is the throttle, left is the brake. */
-    @Volatile private var throttleDown = false
+    /** What the two controls are asking for: the gas slider is analogue. */
+    @Volatile private var throttleWanted = 0.0
     @Volatile private var brakeDown = false
     private var throttle = 0.0
     private var brake = 0.0
@@ -85,9 +85,9 @@ class GameActivity : ComponentActivity() {
                     onMenu = { game.toMenu() },
                     onRecentre = { steering.calibrate() },
                     onInvert = { steering.invert = !steering.invert },
-                    onPedals = { throttle, brake ->
-                        throttleDown = throttle
-                        brakeDown = brake
+                    onPedals = { gas, braking ->
+                        throttleWanted = gas.toDouble()
+                        brakeDown = braking
                     }
                 )
             }
@@ -101,7 +101,7 @@ class GameActivity : ComponentActivity() {
         game.resetCamera()
         game.track?.let { renderer.setTrack(it) }
         steering.calibrate()
-        throttleDown = false
+        throttleWanted = 0.0
         brakeDown = false
         throttle = 0.0
         brake = 0.0
@@ -110,8 +110,11 @@ class GameActivity : ComponentActivity() {
 
     private fun advance(dt: Double) {
         // Pedals ramp rather than snap: a real driver rolls onto the throttle.
+        // The slider says how much, so the ramp only has to cover the travel
+        // between where the pedal is and where the thumb has asked for.
         val rate = 6.5 * dt
-        throttle = (throttle + if (throttleDown) rate else -rate * 2).coerceIn(0.0, 1.0)
+        throttle += (throttleWanted - throttle).coerceIn(-rate * 2, rate)
+        throttle = throttle.coerceIn(0.0, 1.0)
         brake = (brake + if (brakeDown) rate * 2 else -rate * 2.5).coerceIn(0.0, 1.0)
 
         val steer = steering.update(dt)
@@ -122,7 +125,6 @@ class GameActivity : ComponentActivity() {
 
         updateEngineSound(dt)
 
-        if (wasRacing && game.lastImpact > 6.0) vibrate(40)
         if (wasRacing && game.state == Game.State.FINISHED) vibrate(120)
 
         logProgress(dt)
@@ -230,7 +232,7 @@ class GameActivity : ComponentActivity() {
         tiltSensor.stop()
         engine.running = false
         engine.stop()
-        throttleDown = false
+        throttleWanted = 0.0
         brakeDown = false
     }
 

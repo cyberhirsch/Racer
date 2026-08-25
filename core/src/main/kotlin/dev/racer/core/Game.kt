@@ -55,10 +55,6 @@ class Game(private val storage: Storage = Storage.InMemory()) {
     var newBest = false
         private set
 
-    /** Set when a barrier is struck hard, for the screen flash and haptics. */
-    var lastImpact = 0.0
-        private set
-
     /** Which checkpoint gates are still to be passed, for the renderer. */
     fun gateVisible(i: Int) = i >= nextCheckpoint
 
@@ -87,7 +83,6 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         topSpeed = 0.0
         failReason = null
         newBest = false
-        lastImpact = 0.0
         state = State.MENU
     }
 
@@ -110,7 +105,6 @@ class Game(private val storage: Storage = Storage.InMemory()) {
      */
     fun update(frameDelta: Double, input: Input) {
         val dt = min(frameDelta, MAX_FRAME_DELTA)
-        lastImpact = 0.0
 
         when (state) {
             State.COUNTDOWN -> {
@@ -145,10 +139,6 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         vehicle.step(STEP, input)
 
-        surf.hit?.let {
-            val impact = vehicle.collide(it.nx, it.nz, it.penetration + 0.02)
-            lastImpact = max(lastImpact, impact)
-        }
         if (vehicle.fuel <= 0.0) {
             fail("OUT OF FUEL")
             return false

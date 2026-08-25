@@ -256,28 +256,4 @@ class Vehicle {
         fuel = max(0.0, fuel - burn)
         fuelUsed += burn
     }
-
-    /**
-     * Bounce off a barrier. Returns the impact speed along the wall normal so
-     * the caller can scale feedback (screen flash, haptics) to the severity.
-     */
-    fun collide(normalX: Double, normalZ: Double, penetration: Double): Double {
-        x += normalX * penetration
-        z += normalZ * penetration
-
-        val s = sin(yaw); val c = cos(yaw)
-        var wvx = vx * s + vy * c
-        var wvz = vx * c - vy * s
-        val vn = wvx * normalX + wvz * normalZ
-        if (vn < 0) {
-            // Absorb most of the impact, keep a little scrape along the barrier.
-            wvx -= normalX * vn * 1.25
-            wvz -= normalZ * vn * 1.25
-            wvx *= 0.72; wvz *= 0.72
-        }
-        vx = wvx * s + wvz * c
-        vy = wvx * c - wvz * s
-        yawRate *= 0.4
-        return abs(vn)
-    }
 }

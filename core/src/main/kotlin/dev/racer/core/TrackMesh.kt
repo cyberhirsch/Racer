@@ -9,9 +9,9 @@ import kotlin.math.PI
 /**
  * Turns a [Track] into renderable geometry.
  *
- * Everything static — road, lines, kerbs, gravel, barriers, the start gantry —
+ * Everything static — road, lines, kerbs, gravel, the start gantry —
  * goes into a single mesh, and therefore a single draw call. Built as separate
- * objects, a long circuit's kerbs and barriers alone are well over a thousand
+ * objects, a long circuit's kerbs and gates alone are well over a thousand
  * draws per frame, which is enough to halve the frame rate on a phone.
  *
  * The checkpoint gates are returned separately because they are drawn
@@ -25,11 +25,12 @@ object TrackMesh {
     private val KERB_WHITE = Material.rgb(0xEDEDED, specular = 0.2f)
     private val GRAVEL = Material.rgb(0x6B5A3E, specular = 0.02f)
     private val GRASS = Material.rgb(0x2F4A2B, specular = 0.02f)
-    private val BARRIER = Material.rgb(0xB9C0C8, specular = 0.6f)
-    private val POST = Material.rgb(0x33383F, specular = 0.2f)
     private val DARK = Material.rgb(0x22262C, specular = 0.4f)
     private val CHECK_DARK = Material.rgb(0x111111, specular = 0.1f)
     private val CHECK_LIGHT = Material.rgb(0xF5F5F5, specular = 0.1f)
+
+    /** How far the grass reaches beyond the gravel, in metres. */
+    private const val GRASS_APRON = 90.0
 
     class Gate(val mesh: Mesh, val frameIndex: Int, val finish: Boolean)
 
@@ -42,14 +43,16 @@ object TrackMesh {
         // Grass apron, gravel traps, road, then the painted lines on top. Each
         // is a ribbon between two lateral offsets, at a slightly different
         // height so they do not z-fight.
-        ribbon(b, track, -(track.wallOffset + 26.0), track.wallOffset + 26.0, -0.14f, GRASS)
-        ribbon(b, track, -track.wallOffset, track.wallOffset, -0.02f, GRAVEL)
+        // The grass runs a long way out, because there is nothing to stop you
+        // going there: no barriers anywhere on the circuit. Driving off is
+        // allowed, and it should not end at the edge of a green rug.
+        ribbon(b, track, -(track.runoff + GRASS_APRON), track.runoff + GRASS_APRON, -0.14f, GRASS)
+        ribbon(b, track, -track.runoff, track.runoff, -0.02f, GRAVEL)
         ribbon(b, track, -track.halfWidth, track.halfWidth, 0.02f, ROAD)
         ribbon(b, track, -track.halfWidth + 0.15, -track.halfWidth + 0.45, 0.035f, LINE)
         ribbon(b, track, track.halfWidth - 0.45, track.halfWidth - 0.15, 0.035f, LINE)
 
         kerbs(b, track)
-        barriers(b, track)
         startGantry(b, track, hw)
 
         val gates = track.checkpoints.mapIndexed { i, frameIndex ->
@@ -96,30 +99,6 @@ object TrackMesh {
                 if (stripe++ % 2 == 0) KERB_RED else KERB_WHITE
             )
             i += 2
-        }
-    }
-
-    private fun barriers(b: MeshBuilder, track: Track) {
-        for (side in listOf(-1.0, 1.0)) {
-            var i = 0
-            while (i < track.frames.size - 1) {
-                val f = track.frames[i]
-                val f2 = track.frames[minOf(i + 3, track.frames.size - 1)]
-                val seg = f.pos.distanceTo(f2.pos).coerceAtLeast(2.0)
-                val off = side * track.wallOffset
-                val pos = Vec3(f.pos.x + f.right.x * off, 0.55, f.pos.z + f.right.z * off)
-                val yaw = atan2(f.tangent.x, f.tangent.z).toFloat()
-
-                b.addBox(Vec3(0.20f, 1.10f, (seg * 1.05).toFloat()),
-                    Mat4.compose(pos, Vec3(0f, yaw, 0f)), BARRIER)
-                if (i % 12 == 0) {
-                    b.addBox(Vec3(0.16f, 0.8f, 0.16f), Mat4.compose(
-                        Vec3(pos.x + (f.right.x * side * 0.2).toFloat(), 0.4f, pos.z + (f.right.z * side * 0.2).toFloat()),
-                        Vec3(0f, yaw, 0f)
-                    ), POST)
-                }
-                i += 3
-            }
         }
     }
 

@@ -55,27 +55,56 @@ if ! tap_text "START ENGINE"; then
     adb shell input tap $(( w * 3 / 4 )) $(( h * 4 / 5 ))
 fi
 
-# Countdown, then hold the throttle on the right-hand half of the screen.
+# Countdown, then hold the throttle. The gas is a capsule slider on the right:
+# how far up it is pressed is how much throttle is asked for, so the press has
+# to land near its top, not just anywhere on that side of the screen.
 # `input swipe` with identical start and end points does not reliably hold a
 # press; explicit motion events do.
 sleep 6
 size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1)
 w=${size%x*}; h=${size#*x}
 if [ "$h" -gt "$w" ]; then t=$w; w=$h; h=$t; fi
-TX=$(( w * 4 / 5 )); TY=$(( h / 2 ))
-echo "holding the throttle at ${TX},${TY} (screen ${w}x${h})"
 
 # What is actually on screen right now? If the menu is still up while the game
 # reports RACING, the HUD is not following the game state.
 adb shell uiautomator dump /sdcard/ui2.xml >/dev/null 2>&1 || true
-ON_SCREEN=$(adb shell cat /sdcard/ui2.xml 2>/dev/null | grep -o 'text="[^"]*"' | sed 's/text=//' | sort -u | tr '\n' ' ')
+UI2=$(adb shell cat /sdcard/ui2.xml 2>/dev/null)
+ON_SCREEN=$(echo "$UI2" | grep -o 'text="[^"]*"' | sed 's/text=//' | sort -u | tr '\n' ' ')
 echo "on screen during the race: $ON_SCREEN"
+
+# The slider carries a content description for exactly this purpose.
+GAS_BOUNDS=$(echo "$UI2" | tr '<' '\n' | grep 'content-desc="GAS SLIDER"' \
+    | grep -o 'bounds="[^"]*"' | head -1 | grep -o '[0-9]\+')
+if [ -n "$GAS_BOUNDS" ]; then
+    read -r GX1 GY1 GX2 GY2 <<< "$(echo "$GAS_BOUNDS" | tr '\n' ' ')"
+    TX=$(( (GX1 + GX2) / 2 ))
+    # An eighth of the way down from the top: near, but not on, full throttle.
+    TY=$(( GY1 + (GY2 - GY1) / 8 ))
+    echo "holding the gas slider at ${TX},${TY} (slider ${GX1},${GY1}-${GX2},${GY2})"
+else
+    TX=$(( w * 93 / 100 )); TY=$(( h * 60 / 100 ))
+    echo "could not find the gas slider; pressing ${TX},${TY} (screen ${w}x${h})"
+fi
 
 adb shell input motionevent DOWN "$TX" "$TY" || adb shell input tap "$TX" "$TY"
 sleep 5
 adb exec-out screencap -p > "$OUT/02-racing.png"
 sleep 4
 adb exec-out screencap -p > "$OUT/03-racing-later.png"
+
+# Is the HUD actually following the game, or drawing a stale frame? Compose
+# skips a composable whose inputs have not changed, and the game state it draws
+# lives outside Compose — so the display once sat on the starting numbers while
+# the race ran underneath it, which is what stopped the countdown counting.
+# The fuel reading is the check: it is on screen and in the log, in the same
+# format, and it only ever falls.
+adb shell uiautomator dump /sdcard/ui3.xml >/dev/null 2>&1 || true
+HUD_FUEL=$(adb shell cat /sdcard/ui3.xml 2>/dev/null | grep -o 'text="[0-9.]* kg"' \
+    | grep -o '[0-9.]*' | head -1)
+LOG_FUEL=$(adb logcat -d | grep -o "fuel=[0-9.]*kg" | tail -1 | grep -o '[0-9.]*')
+HUD_FUEL=${HUD_FUEL:-none}; LOG_FUEL=${LOG_FUEL:-none}
+echo "HUD shows ${HUD_FUEL} kg; the game is at ${LOG_FUEL} kg"
+
 adb shell input motionevent UP "$TX" "$TY" || true
 
 # --- horizon check -----------------------------------------------------------
@@ -160,6 +189,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
         grep -A 12 -E "FATAL EXCEPTION" "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true
     fi
     echo "SMOKE on screen during the race: $ON_SCREEN"
+    echo "SMOKE hud fuel=${HUD_FUEL}kg vs game fuel=${LOG_FUEL}kg (the HUD must not be stale)"
     echo "SMOKE tilt: injected ${ROLL_DEG} deg -> app read ${APP_ROLL} deg -> renderer drew ${DRAW_ROLL} deg (must oppose)"
     echo "SMOKE audio: $(grep -c "engine audio started" "$OUT/logcat.txt") engine synth start(s)"
     echo "SMOKE tilt: upright -> renderer drew ${DRAW_ROLL_LEVEL} deg"
@@ -184,6 +214,19 @@ FAILED=0
 [ "$REACHED_RACING" = no ] && { echo "FAIL: the game never reached RACING - the menu did not respond."; FAILED=1; }
 [ "$TOP" -lt 30 ] && { echo "FAIL: the car never got moving (peak ${TOP} km/h)."; FAILED=1; }
 [ "$FOREGROUND" = no ] && { echo "FAIL: the app is no longer in the foreground."; FAILED=1; }
+
+python3 - "$HUD_FUEL" "$LOG_FUEL" <<'HUD' || FAILED=1
+import sys
+hud, log = sys.argv[1], sys.argv[2]
+if hud == "none" or log == "none":
+    print(f"FAIL: could not read the fuel from both places (hud={hud}, game={log}).")
+    sys.exit(1)
+if abs(float(hud) - float(log)) > 0.1:
+    print(f"FAIL: the HUD shows {hud} kg while the game is at {log} kg — it is "
+          f"drawing a stale frame, which also stops the countdown counting.")
+    sys.exit(1)
+print(f"OK: the HUD is live ({hud} kg on screen, {log} kg in the game).")
+HUD
 
 # What the emulator can prove, and a unit test cannot, is that a real tilt
 # reaches the renderer. What the renderer then does with that number is proved

@@ -17,13 +17,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -34,6 +38,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -60,18 +66,25 @@ private val Panel = Color(0xE60E1118)
  * suspends until the next frame, so exactly one update happens per frame and
  * late frames simply delay the next one.
  *
+ * The state is handed back rather than read here, and that is the whole point.
+ * Compose subscribes the composable that *reads* a state, so reading it inside
+ * this function invalidated only this function — [Hud] itself was never marked
+ * for recomposition and went on drawing a stale frame. The race was live
+ * underneath it: the screen showed 0 km/h and 2.25 kg while the game was doing
+ * 123 km/h on 2.02 kg, and the countdown never counted.
+ *
  * Posting an update per frame from the render thread instead (runOnUiThread)
- * is what froze the HUD: on a slow device each recomposition takes longer than
- * a frame, the queue grows without bound, and the main thread never catches up
- * — leaving the menu on screen, and taking taps, while a race was underway.
+ * is what froze the HUD outright: on a slow device each recomposition takes
+ * longer than a frame, the queue grows without bound, and the main thread
+ * never catches up.
  */
 @Composable
-private fun rememberFrameTick(): Int {
-    var tick by remember { mutableIntStateOf(0) }
+private fun rememberFrameTicker(): MutableIntState {
+    val tick = remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
             withFrameNanos { }
-            tick++
+            tick.intValue++
         }
     }
     return tick
@@ -95,15 +108,17 @@ fun Hud(
     onInvert: () -> Unit,
     onPedals: (throttle: Boolean, brake: Boolean) -> Unit
 ) {
-    // Read the frame tick here so this composable is what recomposes each
-    // frame, leaving the GL surface beside it untouched.
-    rememberFrameTick()
+    // Read the tick here, so it is this composable that Compose marks for
+    // recomposition each frame — and pass it down, so the racing HUD cannot be
+    // skipped either. The GL surface beside it has no changing input and is
+    // left alone.
+    val frame = rememberFrameTicker().intValue
 
     Box(Modifier.fillMaxSize()) {
         when (game.state) {
             Game.State.MENU -> Menu(game, tiltAvailable, onStart)
             Game.State.COUNTDOWN, Game.State.RACING ->
-                Racing(game, steering, onRecentre, onInvert, onPedals)
+                Racing(game, frame, steering, onRecentre, onInvert, onPedals)
             Game.State.FINISHED -> Result(game, finished = true, onNext = onNext, onMenu = onMenu)
             Game.State.FAILED -> Result(game, finished = false, onNext = onRetry, onMenu = onMenu)
         }
@@ -115,44 +130,17 @@ fun Hud(
 @Composable
 private fun Racing(
     game: Game,
+    @Suppress("UNUSED_PARAMETER") frame: Int,
     steering: TiltSteering,
     onRecentre: () -> Unit,
     onInvert: () -> Unit,
-    onPedals: (throttle: Boolean, brake: Boolean) -> Unit
+    onPedals: (throttle: Float, brake: Boolean) -> Unit
 ) {
-    // The pedals live on this Box — the same node that draws the GAS and BRAKE
-    // hints — so there is exactly one owner of the gesture. Splitting the
-    // visual from the touch target across separate layers makes which one
-    // actually receives a press a matter of z-order luck.
-    //
-    // The HUD's own buttons are children of this Box and are hit-tested first,
-    // so CENTRE and INVERT still work.
-    Box(
-        Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val half = size.width / 2f
-                        var left = false
-                        var right = false
-                        for (change in event.changes) {
-                            if (!change.pressed) continue
-                            if (change.position.x > half) right = true else left = true
-                        }
-                        onPedals(right, left)
-                    }
-                }
-            }
-            .padding(14.dp)
-    ) {
-
-        // Pedal hints, so it is obvious which half does what.
-        Row(Modifier.fillMaxSize()) {
-            PedalHint("BRAKE", Color(0x40FF3C28), Modifier.weight(1f).fillMaxHeight())
-            PedalHint("GAS", Color(0x3C3CDC82), Modifier.weight(1f).fillMaxHeight())
-        }
+    // `frame` is never read. It is here so that Compose cannot skip this
+    // composable: the game state it draws lives outside Compose and changes
+    // without notice, so the only thing that can force a redraw is a parameter
+    // that differs every frame.
+    Box(Modifier.fillMaxSize().padding(14.dp)) {
 
         // Top: level, time, checkpoints, progress.
         Row(
@@ -174,6 +162,26 @@ private fun Racing(
             }
         }
 
+        // Top left: the steering needle and the two calibration buttons. They
+        // used to sit in the bottom corner, which is now the brake's.
+        Row(Modifier.align(Alignment.TopStart), verticalAlignment = Alignment.Top) {
+            Box(
+                Modifier.size(72.dp, 36.dp).clip(RoundedCornerShape(bottomStart = 36.dp, bottomEnd = 36.dp))
+                    .background(Color(0xA60A0C10)),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Box(
+                    Modifier.rotate(steering.steer.toFloat() * 90f)
+                        .width(3.dp).height(32.dp).background(Red)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SmallButton("CENTRE", onClick = onRecentre)
+                SmallButton("INVERT", active = steering.invert, onClick = onInvert)
+            }
+        }
+
         // Left: the fuel column — the thing that actually ends the race.
         Column(Modifier.align(Alignment.CenterStart), horizontalAlignment = Alignment.CenterHorizontally) {
             val fuel = game.fuelFraction
@@ -183,7 +191,7 @@ private fun Racing(
                 else -> Color(0xFF4ADE80)
             }
             Box(
-                Modifier.width(26.dp).height(120.dp).clip(RoundedCornerShape(13.dp))
+                Modifier.width(26.dp).height(110.dp).clip(RoundedCornerShape(13.dp))
                     .background(Color(0xA60A0C10)).border(1.dp, Color(0x24FFFFFF), RoundedCornerShape(13.dp)),
                 contentAlignment = Alignment.BottomCenter
             ) {
@@ -197,8 +205,11 @@ private fun Racing(
             )
         }
 
-        // Right: speed and gear.
-        Column(Modifier.align(Alignment.BottomEnd), horizontalAlignment = Alignment.End) {
+        // Middle bottom: speed, gear and the rev bar, clear of both thumbs.
+        Column(
+            Modifier.align(Alignment.BottomCenter),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     "${game.speedKmh}", color = Paper, fontSize = 44.sp,
@@ -228,23 +239,17 @@ private fun Racing(
             }
         }
 
-        // Bottom left: steering indicator and the two calibration buttons.
-        Row(Modifier.align(Alignment.BottomStart), verticalAlignment = Alignment.Bottom) {
-            Box(
-                Modifier.size(72.dp, 36.dp).clip(RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp))
-                    .background(Color(0xA60A0C10)),
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                Box(
-                    Modifier.rotate(steering.steer.toFloat() * 90f)
-                        .width(3.dp).height(32.dp).background(Red)
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SmallButton("CENTRE", onClick = onRecentre)
-                SmallButton("INVERT", active = steering.invert, onClick = onInvert)
-            }
+        // The two controls, each with its own gesture and its own corner. A
+        // whole-screen-half split meant a thumb resting anywhere counted, and
+        // gave no way to ask for part throttle.
+        // Each control reports only its own change; the activity wants both at
+        // once, so the last value of the other one is kept here.
+        val pedals = remember { Pedals() }
+        BrakeButton(Modifier.align(Alignment.BottomStart)) {
+            pedals.brake = it; onPedals(pedals.gas, it)
+        }
+        GasSlider(Modifier.align(Alignment.BottomEnd)) {
+            pedals.gas = it; onPedals(it, pedals.brake)
         }
 
         if (game.vehicle.offTrack && game.state == Game.State.RACING) {
@@ -255,68 +260,120 @@ private fun Racing(
             )
         }
 
-        Countdown(game)
+        Countdown(game, Modifier.align(Alignment.TopEnd))
+    }
+}
+
+/** The last reading from each control, so either can report on its own. */
+private class Pedals {
+    var gas = 0f
+    var brake = false
+}
+
+/**
+ * The throttle: a capsule you slide a thumb up.
+ *
+ * How far up decides how much, which a screen half could never express — and
+ * with the tank as the clock, feathering it is the whole game. It springs back
+ * to nothing when released, because a throttle that stayed where you left it
+ * would keep the car accelerating into a corner after you had let go.
+ */
+@Composable
+private fun GasSlider(modifier: Modifier, onChange: (Float) -> Unit) {
+    var level by remember { mutableFloatStateOf(0f) }
+    Box(
+        modifier
+            .size(76.dp, 210.dp)
+            // Named so the emulator smoke test can find the control and press
+            // a known point on it, rather than guessing at screen fractions.
+            .semantics { contentDescription = "GAS SLIDER" }
+            .clip(RoundedCornerShape(38.dp))
+            .background(Color(0x9E0A0C10))
+            .border(2.dp, Color(0x3C3CDC82), RoundedCornerShape(38.dp))
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val down = event.changes.firstOrNull { it.pressed }
+                        level = if (down == null) 0f
+                        else (1f - down.position.y / size.height.toFloat()).coerceIn(0f, 1f)
+                        onChange(level)
+                    }
+                }
+            },
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        // The fill is the reading: how high it stands is how much you asked for.
+        Box(
+            Modifier.fillMaxWidth().fillMaxHeight(level.coerceAtLeast(0.02f))
+                .background(
+                    Brush.verticalGradient(listOf(Color(0xCC5CE39A), Color(0x803CDC82)))
+                )
+        )
+        Text(
+            "GAS", color = Color(0xCCFFFFFF), fontSize = 10.sp, letterSpacing = 3.sp,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+    }
+}
+
+/** The brake: a small circle, all or nothing, under the left thumb. */
+@Composable
+private fun BrakeButton(modifier: Modifier, onChange: (Boolean) -> Unit) {
+    var down by remember { mutableStateOf(false) }
+    Box(
+        modifier
+            .size(96.dp)
+            .semantics { contentDescription = "BRAKE BUTTON" }
+            .clip(CircleShape)
+            .background(if (down) Color(0xCCFF3C28) else Color(0x9E0A0C10))
+            .border(2.dp, Color(0x66FF3C28), CircleShape)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        down = event.changes.any { it.pressed }
+                        onChange(down)
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "BRAKE", color = Color(0xCCFFFFFF), fontSize = 10.sp, letterSpacing = 2.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
 /**
- * The starting lights.
+ * The starting lights, in the corner.
  *
- * The number used to be a bare white glyph dropped on the middle of the track
- * — over a pale kerb or the sky it was barely there, and it shared the centre
- * of the screen with everything else the HUD draws. It now dims the scene
- * behind it, sits in its own disc, and pops on each new count, so there is no
- * question which second you are on.
- *
- * The scale and fade come from the fractional part of the count rather than an
- * animation: the HUD already recomposes every frame, and driving it from the
- * clock the game itself is using keeps the pop exactly on the beat.
+ * It was a huge glyph across the middle of the screen, which covered the road
+ * at exactly the moment you want to see where you are pointed.
  */
 @Composable
-private fun Countdown(game: Game) {
+private fun Countdown(game: Game, modifier: Modifier) {
     val n = game.countdownLabel ?: return
     val go = n == 0
-
-    // How far through the current second we are, 0 at the moment it changes.
-    val into = (1.0 - (game.countdown - kotlin.math.floor(game.countdown))).toFloat()
-    val pop = 1f + 0.35f * (1f - (into * 3.2f).coerceIn(0f, 1f))
-    val fade = (1f - (into - 0.75f) * 3f).coerceIn(0.25f, 1f)
-
     Box(
-        Modifier.fillMaxSize().background(Color(0x66000000)),
+        modifier
+            .padding(top = 34.dp)
+            .size(if (go) 62.dp else 44.dp, 44.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (go) Red else Color(0xCC0A0C10))
+            .border(2.dp, if (go) Color.White else Red, RoundedCornerShape(22.dp)),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier
-                .scale(pop)
-                .alpha(fade)
-                .size(if (go) 200.dp else 140.dp, 140.dp)
-                .clip(RoundedCornerShape(70.dp))
-                .background(if (go) Red else Color(0xCC0A0C10))
-                .border(3.dp, if (go) Color.White else Red, RoundedCornerShape(70.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                if (go) "GO!" else "$n",
-                color = Color.White,
-                fontSize = if (go) 56.sp else 84.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = if (go) 4.sp else 0.sp
-            )
-        }
+        Text(
+            if (go) "GO!" else "$n",
+            color = Color.White,
+            fontSize = if (go) 16.sp else 22.sp,
+            fontWeight = FontWeight.Black
+        )
     }
 }
 
-@Composable
-private fun PedalHint(text: String, tint: Color, modifier: Modifier) {
-    Box(modifier.background(Brush.verticalGradient(listOf(Color.Transparent, tint))),
-        contentAlignment = Alignment.BottomCenter) {
-        Text(text, color = Color(0x66FFFFFF), fontSize = 10.sp, letterSpacing = 3.sp,
-            modifier = Modifier.padding(bottom = 4.dp))
-    }
-}
-
-/* ------------------------------------------------------------------ menus */
 
 @Composable
 private fun Menu(game: Game, tiltAvailable: Boolean, onStart: (Int) -> Unit) {

@@ -124,7 +124,15 @@ private class ClosedSpline(private val pts: List<Vec2>, private val tension: Dou
 
 class Track(val cfg: LevelConfig) {
     val halfWidth = cfg.width / 2
-    val wallOffset = halfWidth + 3.0     // barriers sit back from the tarmac
+    /**
+     * Half-width of the sealed run-off: tarmac, then kerb, then gravel.
+     *
+     * Nothing stops you at the edge of it. There are no barriers anywhere on
+     * the circuit — run wide and you keep going, onto the grass and out into
+     * the countryside, with only grip to argue about it. It still sets how far
+     * apart two stretches of track have to be laid.
+     */
+    val runoff = halfWidth + 3.0
 
     val frames: List<Frame>
     val curvature: DoubleArray
@@ -135,7 +143,7 @@ class Track(val cfg: LevelConfig) {
     val checkpoints: List<Int>
 
     init {
-        val fit = fitCircuit(cfg, wallOffset)
+        val fit = fitCircuit(cfg, runoff)
         frames = fit.frames
         curvature = fit.curvature
         length = frames.last().distance
@@ -178,10 +186,16 @@ class Track(val cfg: LevelConfig) {
         return Location(best, lateral, f, curvature[best])
     }
 
-    class Surface(val loc: Location, val grip: Double, val offTrack: Boolean, val hit: Hit?)
-    class Hit(val nx: Double, val nz: Double, val penetration: Double)
+    class Surface(val loc: Location, val grip: Double, val offTrack: Boolean)
 
-    /** Grip and barrier response for a car position. */
+    /**
+     * Grip for a car position.
+     *
+     * There is no wall to run into, at any distance: leaving the circuit is
+     * allowed and always was more interesting than pinballing off a barrier.
+     * What stops you is grip — tarmac, then kerb, then gravel, then grass —
+     * and the fuel you are wasting while you are out there.
+     */
     fun surface(x: Double, z: Double, hint: Int): Surface {
         val loc = locate(x, z, hint)
         val off = abs(loc.lateral)
@@ -189,17 +203,9 @@ class Track(val cfg: LevelConfig) {
         var offTrack = false
         if (off > halfWidth) {
             offTrack = true
-            // Tarmac -> kerb -> gravel: grip falls away the further you run wide.
-            grip = max(0.42, 1.0 - (off - halfWidth) * 0.28)
+            grip = max(GRASS_GRIP, 1.0 - (off - halfWidth) * 0.28)
         }
-        var hit: Hit? = null
-        if (off > wallOffset) {
-            val side = if (loc.lateral >= 0) 1.0 else -1.0
-            val f = loc.frame
-            // Normal points back toward the centreline.
-            hit = Hit(-f.right.x * side, -f.right.z * side, off - wallOffset)
-        }
-        return Surface(loc, grip, offTrack, hit)
+        return Surface(loc, grip, offTrack)
     }
 
     /** Signed lateral offset of the finish line, for the finish gate mesh. */
@@ -207,6 +213,9 @@ class Track(val cfg: LevelConfig) {
 
     companion object {
         const val CHECKPOINT_COUNT = 8
+
+        /** All the grip there is once you are well off the circuit. */
+        const val GRASS_GRIP = 0.35
         private const val SEARCH_SPAN = 40
         private const val FRAME_SPACING = 3.0
 
@@ -282,7 +291,7 @@ class Track(val cfg: LevelConfig) {
          * considered to be on top of each other. Two stretches of track need
          * room for both their barriers plus a little scenery between them.
          */
-        private fun minClearance(wallOffset: Double) = wallOffset * 2 + 4.0
+        private fun minClearance(runoff: Double) = runoff * 2 + 4.0
 
         /**
          * True if the loop passes close to itself anywhere, which would put two
@@ -293,8 +302,8 @@ class Track(val cfg: LevelConfig) {
          * Checked on a coarse subsample — an overlap is many frames wide, so it
          * cannot hide between samples.
          */
-        private fun selfIntersects(frames: List<Frame>, wallOffset: Double): Boolean {
-            val clearance = minClearance(wallOffset)
+        private fun selfIntersects(frames: List<Frame>, runoff: Double): Boolean {
+            val clearance = minClearance(runoff)
             val stride = 4
             val n = frames.size - 1
             // Ignore neighbours: points near each other along the track are of
@@ -319,10 +328,10 @@ class Track(val cfg: LevelConfig) {
          * Fit a circuit, retrying with a nudged seed until the result is a
          * simple (non-self-overlapping) loop.
          */
-        private fun fitCircuit(cfg: LevelConfig, wallOffset: Double): Fit {
+        private fun fitCircuit(cfg: LevelConfig, runoff: Double): Fit {
             for (attempt in 0 until MAX_SEED_ATTEMPTS) {
                 val fit = fitOnce(cfg.copy(seed = cfg.seed + attempt * 7919))
-                if (!selfIntersects(fit.frames, wallOffset)) return fit
+                if (!selfIntersects(fit.frames, runoff)) return fit
             }
             // Should not happen for any sane config, but never fail to produce a
             // track: fall back to the smoothest shape we can make.

@@ -70,13 +70,13 @@ class TrackTest {
     }
 
     @Test
-    fun `running wide loses grip and hitting the barrier reports an inward normal`() {
+    fun `running wide loses grip, and nothing stops you leaving`() {
         val t = Track(Levels.config(0))
         val f = t.frames[100]
 
         val onTrack = t.surface(f.pos.x, f.pos.z, 100)
         assertEquals(1.0, onTrack.grip, 1e-9)
-        assertTrue(!onTrack.offTrack && onTrack.hit == null)
+        assertTrue("the middle of the road is not off track", !onTrack.offTrack)
 
         val wide = t.surface(
             f.pos.x + f.right.x * (t.halfWidth + 1.5),
@@ -85,16 +85,14 @@ class TrackTest {
         assertTrue("should be off track", wide.offTrack)
         assertTrue("should have lost grip", wide.grip < 1.0)
 
-        val into = t.wallOffset + 1.0
-        val wall = t.surface(f.pos.x + f.right.x * into, f.pos.z + f.right.z * into, 100)
-        val hit = wall.hit
-        assertTrue("should have hit the barrier", hit != null)
-        hit!!
-        // The normal must point back toward the centreline, i.e. opposite the
-        // direction we went out.
-        assertTrue("normal points the wrong way",
-            hit.nx * f.right.x + hit.nz * f.right.z < -0.9)
-        assertEquals(1.0, hit.penetration, 1e-6)
+        // Well past where the barriers used to stand. There is nothing out
+        // here now: the surface reports grass grip and lets you carry on.
+        for (into in listOf(t.runoff + 1.0, t.runoff + 40.0, t.runoff + 500.0)) {
+            val out = t.surface(f.pos.x + f.right.x * into, f.pos.z + f.right.z * into, 100)
+            assertTrue("should still be off track at ${into}m", out.offTrack)
+            assertEquals("grip should bottom out at grass, not stop the car",
+                Track.GRASS_GRIP, out.grip, 1e-9)
+        }
     }
 
     @Test
