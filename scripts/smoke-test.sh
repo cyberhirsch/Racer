@@ -85,6 +85,8 @@ adb shell input motionevent UP "$TX" "$TY" || true
 # The emulator's accelerometer can be driven directly, so a known tilt can be
 # injected and the resulting frame measured.
 echo "== checking the horizon stays level =="
+# Keep the log so far; the tilt check clears logcat to isolate its own window.
+adb logcat -d > "$OUT/logcat-race.txt"
 ROLL_DEG=25
 python3 - "$ROLL_DEG" > /tmp/gravity.txt <<'GRAV'
 import math, sys
@@ -96,6 +98,10 @@ GRAV
 GRAVITY=$(cat /tmp/gravity.txt)
 echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
 
+# Clear the log first: the app briefly draws a large roll at startup, before
+# the steering is calibrated, and that would otherwise be picked up as the
+# largest roll of the run.
+adb logcat -c
 adb emu sensor set acceleration "$GRAVITY" || echo "could not drive the emulator's sensor"
 sleep 3
 adb exec-out screencap -p > "$OUT/04-rolled.png"
@@ -104,7 +110,7 @@ APP_ROLL=$(adb logcat -d | grep -o "viewRoll=[-0-9.]*" | tail -1 | cut -d= -f2)
 APP_ROLL=${APP_ROLL:-0}
 # The largest roll the renderer actually drew with while the phone was tilted.
 DRAW_ROLL=$(adb logcat -d | grep -o "draw roll=[-0-9.]* deg" | grep -o "[-0-9.]*" \
-    | sort -n | tail -1)
+    | sort -g | tail -1)
 DRAW_ROLL=${DRAW_ROLL:-0}
 echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg"
 
@@ -118,7 +124,8 @@ DRAW_ROLL_LEVEL=${DRAW_ROLL_LEVEL:-99}
 echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 
 
-adb logcat -d > "$OUT/logcat.txt"
+cat "$OUT/logcat-race.txt" > "$OUT/logcat.txt" 2>/dev/null || true
+adb logcat -d >> "$OUT/logcat.txt"
 
 # Gather the evidence first and write it to a file. Checks come afterwards, so
 # a failing run still explains itself and still produces the previews.
