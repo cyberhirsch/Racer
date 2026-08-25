@@ -72,18 +72,27 @@ UI2=$(adb shell cat /sdcard/ui2.xml 2>/dev/null)
 ON_SCREEN=$(echo "$UI2" | grep -o 'text="[^"]*"' | sed 's/text=//' | sort -u | tr '\n' ' ')
 echo "on screen during the race: $ON_SCREEN"
 
-# The slider carries a content description for exactly this purpose.
+# Where is the top of the gas slider? The slider carries a content description
+# for this, but Compose reported its node with zero bounds, so the layout is
+# also worked out directly: the capsule is 76x210dp in the bottom-right corner
+# inside 14dp of padding, and dp become pixels through the screen density.
+DENSITY=$(adb shell wm density | grep -o '[0-9]*' | tail -1)
+DENSITY=${DENSITY:-160}
+dp() { echo $(( $1 * DENSITY / 160 )); }
+
 GAS_BOUNDS=$(echo "$UI2" | tr '<' '\n' | grep 'content-desc="GAS SLIDER"' \
     | grep -o 'bounds="[^"]*"' | head -1 | grep -o '[0-9]\+')
-if [ -n "$GAS_BOUNDS" ]; then
-    read -r GX1 GY1 GX2 GY2 <<< "$(echo "$GAS_BOUNDS" | tr '\n' ' ')"
+read -r GX1 GY1 GX2 GY2 <<< "$(echo "${GAS_BOUNDS:-0 0 0 0}" | tr '\n' ' ')"
+GX1=${GX1:-0}; GY1=${GY1:-0}; GX2=${GX2:-0}; GY2=${GY2:-0}
+if [ "$GX2" -gt 0 ] && [ "$GY2" -gt "$GY1" ]; then
     TX=$(( (GX1 + GX2) / 2 ))
     # An eighth of the way down from the top: near, but not on, full throttle.
     TY=$(( GY1 + (GY2 - GY1) / 8 ))
-    echo "holding the gas slider at ${TX},${TY} (slider ${GX1},${GY1}-${GX2},${GY2})"
+    echo "holding the gas slider at ${TX},${TY} (from its bounds ${GX1},${GY1}-${GX2},${GY2})"
 else
-    TX=$(( w * 93 / 100 )); TY=$(( h * 60 / 100 ))
-    echo "could not find the gas slider; pressing ${TX},${TY} (screen ${w}x${h})"
+    TX=$(( w - $(dp 14) - $(dp 38) ))
+    TY=$(( h - $(dp 14) - $(dp 210) + $(dp 26) ))
+    echo "gas slider bounds unusable; pressing ${TX},${TY} from the layout (density ${DENSITY}, screen ${w}x${h})"
 fi
 
 adb shell input motionevent DOWN "$TX" "$TY" || adb shell input tap "$TX" "$TY"
@@ -213,6 +222,15 @@ FAILED=0
 [ "$SHADER" = yes ] && { echo "FAIL: a shader failed to build."; FAILED=1; }
 [ "$REACHED_RACING" = no ] && { echo "FAIL: the game never reached RACING - the menu did not respond."; FAILED=1; }
 [ "$TOP" -lt 30 ] && { echo "FAIL: the car never got moving (peak ${TOP} km/h)."; FAILED=1; }
+# The slider is analogue: pressing near its top must ask for most of the
+# throttle, not merely something above zero.
+PEAK_THROTTLE=$(grep -o "throttle=[0-9.]*" "$OUT/logcat.txt" | cut -d= -f2 | sort -g | tail -1)
+PEAK_THROTTLE=${PEAK_THROTTLE:-0}
+echo "peak throttle asked for: $PEAK_THROTTLE"
+awk -v t="$PEAK_THROTTLE" 'BEGIN { exit (t >= 0.6 ? 0 : 1) }' || {
+    echo "FAIL: pressing near the top of the gas slider only asked for ${PEAK_THROTTLE} throttle."
+    FAILED=1
+}
 [ "$FOREGROUND" = no ] && { echo "FAIL: the app is no longer in the foreground."; FAILED=1; }
 
 python3 - "$HUD_FUEL" "$LOG_FUEL" <<'HUD' || FAILED=1
