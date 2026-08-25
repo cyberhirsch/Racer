@@ -42,6 +42,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     private var trackBuffers: GpuMesh? = null
     private var gateBuffers: List<GpuMesh> = emptyList()
     private var carBody: GpuMesh? = null
+    private var carShadow: GpuMesh? = null
     private var wheels: List<Pair<GpuMesh, CarMesh.Wheel>> = emptyList()
 
     private var width = 1
@@ -67,7 +68,13 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        GLES30.glClearColor(SKY[0], SKY[1], SKY[2], 1f)
+        // The empty sky has to match what the shader paints on geometry that
+        // has faded entirely into the haze, or there is a visible seam along
+        // the horizon where the two meet. Since the shader now tone maps, the
+        // clear colour has to go through the same curve rather than being the
+        // fog colour itself.
+        val sky = skyAsDisplayed()
+        GLES30.glClearColor(sky[0], sky[1], sky[2], 1f)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glEnable(GLES30.GL_CULL_FACE)
         GLES30.glCullFace(GLES30.GL_BACK)
@@ -85,6 +92,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         // The car never changes, so build it once.
         val car = CarMesh.build()
         carBody = upload(car.body)
+        carShadow = upload(CarMesh.shadow())
         wheels = car.wheels.map { upload(it.mesh) to it }
 
         // A surface can be recreated (app resumed, context lost); rebuild the
@@ -136,11 +144,13 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         GLES30.glUniform3f(uFogColor, SKY[0], SKY[1], SKY[2])
         GLES30.glUniform2f(uFogRange, 140f, 620f)
         GLES30.glUniform1f(uAlpha, 1f)
+        GLES30.glUniform1f(uUnlit, 0f)
         GLES30.glUniform3f(uTint, 1f, 1f, 1f)
 
         GLES30.glDisable(GLES30.GL_BLEND)
         trackBuffers?.let { draw(it, Mat4.identity(), viewProjection) }
 
+        drawShadow(viewProjection)
         drawCar(viewProjection)
 
         // Gates last, blended, and only the ones still to be passed.
@@ -153,6 +163,33 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
             if (game.gateVisible(i)) draw(mesh, Mat4.identity(), viewProjection)
         }
         GLES30.glUniform1f(uAlpha, 1f)
+        GLES30.glEnable(GLES30.GL_CULL_FACE)
+        GLES30.glDepthMask(true)
+        GLES30.glDisable(GLES30.GL_BLEND)
+    }
+
+    /**
+     * The patch of shade under the car.
+     *
+     * Multiplied over the ground rather than drawn on top of it, so the road
+     * markings and the grain of the tarmac still show through — a flat grey
+     * blob painted over them would look like a sticker. Culling is off because
+     * the winding of a fan is easy to get backwards and there is nothing to
+     * gain by insisting on it, and depth writes are off so the car is not
+     * fighting its own shadow for the same millimetre of ground.
+     */
+    private fun drawShadow(viewProjection: Mat4) {
+        val shadow = carShadow ?: return
+        val v = game.vehicle
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_ZERO, GLES30.GL_SRC_COLOR)
+        GLES30.glDepthMask(false)
+        GLES30.glDisable(GLES30.GL_CULL_FACE)
+        GLES30.glUniform1f(uUnlit, 1f)
+
+        draw(shadow, Mat4.compose(Vec3(v.x, 0.0, v.z), Vec3(0f, v.yaw.toFloat(), 0f)), viewProjection)
+
+        GLES30.glUniform1f(uUnlit, 0f)
         GLES30.glEnable(GLES30.GL_CULL_FACE)
         GLES30.glDepthMask(true)
         GLES30.glDisable(GLES30.GL_BLEND)
@@ -253,6 +290,18 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
 
     private companion object {
         val SKY = floatArrayOf(0.56f, 0.71f, 0.87f)
+
+        /**
+         * [SKY] put through the same decode, tone map and encode the fragment
+         * shader applies, so the cleared background and fully fogged geometry
+         * end up the same colour.
+         */
+        fun skyAsDisplayed(): FloatArray = FloatArray(3) { i ->
+            val linear = SKY[i] * SKY[i]
+            val mapped = ((linear * (2.51f * linear + 0.03f)) /
+                (linear * (2.43f * linear + 0.59f) + 0.14f)).coerceIn(0f, 1f)
+            kotlin.math.sqrt(mapped)
+        }
         val LIGHT = floatArrayOf(0.42f, 0.82f, 0.38f)
 
         const val VERTEX_SHADER = """#version 300 es
@@ -276,9 +325,17 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         """
 
         /**
-         * One directional sun with a Blinn-Phong highlight, sky/ground
-         * hemispheric ambient so upward faces pick up the sky, and distance fog
-         * that fades into the horizon.
+         * A directional sun, hemispheric ambient, and distance haze — but all
+         * of it worked out in linear light and tone mapped at the end.
+         *
+         * The old shader added its lighting straight to colours that were
+         * already display-encoded, which is what gave everything that flat,
+         * plastic look: highlights clipped to white instead of rolling off,
+         * shadowed faces went muddy rather than dark, and no amount of tuning
+         * the numbers fixed it. Colours are decoded to linear, lit, run
+         * through a filmic curve and encoded back. Gamma two is used for both
+         * conversions rather than the exact 2.2 — a multiply and a square root
+         * against a pow, for a difference nobody can see on a phone.
          */
         const val FRAGMENT_SHADER = """#version 300 es
             precision mediump float;
@@ -293,27 +350,92 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
             uniform vec2 uFogRange;
             uniform float uAlpha;
             uniform vec3 uTint;
+            uniform float uUnlit;
 
             out vec4 fragColor;
 
+            // Cheap value noise, used to break up surfaces that are otherwise
+            // one flat colour across hundreds of square metres.
+            float hash21(vec2 p) {
+                p = fract(p * vec2(123.34, 456.21));
+                p += dot(p, p + 45.32);
+                return fract(p.x * p.y);
+            }
+
+            float grain(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                float a = hash21(i);
+                float b = hash21(i + vec2(1.0, 0.0));
+                float c = hash21(i + vec2(0.0, 1.0));
+                float d = hash21(i + vec2(1.0, 1.0));
+                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+            }
+
+            // Narkowicz's fit of the ACES curve: highlights roll off instead
+            // of clipping, which is most of the difference between a render
+            // that looks photographed and one that looks drawn.
+            vec3 tonemap(vec3 x) {
+                return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+            }
+
             void main() {
+                // The shadow patch is not a surface and must not be lit: it is
+                // multiplied over the ground exactly as it is.
+                if (uUnlit > 0.5) {
+                    fragColor = vec4(vColor.rgb, 1.0);
+                    return;
+                }
+
                 vec3 n = normalize(vNormal);
                 vec3 l = normalize(uLightDir);
                 vec3 v = normalize(uCameraPos - vWorld);
+                float toCamera = length(uCameraPos - vWorld);
 
-                float diffuse = max(dot(n, l), 0.0);
-                vec3 sky = vec3(0.62, 0.72, 0.88);
-                vec3 ground = vec3(0.22, 0.24, 0.20);
-                vec3 ambient = mix(ground, sky, n.y * 0.5 + 0.5);
+                vec3 albedo = vColor.rgb * uTint;
+                albedo *= albedo;                       // display -> linear
 
-                vec3 base = vColor.rgb * uTint;
-                vec3 lit = base * (ambient * 0.55 + vec3(1.0, 0.97, 0.92) * diffuse * 0.95);
+                // Tarmac and grass are single flat colours over huge areas,
+                // which reads as plastic sheeting. A little noise in the
+                // albedo, on near-horizontal surfaces only and faded out with
+                // distance so it never sparkles, reads as texture.
+                float flat_ = smoothstep(0.75, 0.95, abs(n.y));
+                float near = 1.0 - smoothstep(15.0, 90.0, toCamera);
+                albedo *= 1.0 + (grain(vWorld.xz * 2.7) - 0.5) * 0.22 * flat_ * near;
 
-                float specular = pow(max(dot(n, normalize(l + v)), 0.0), 48.0) * vColor.a;
-                lit += vec3(1.0, 0.98, 0.94) * specular * 0.8;
+                float ndl = max(dot(n, l), 0.0);
+                vec3 sun = vec3(1.0, 0.95, 0.86) * 2.6;
+                vec3 skyLight = vec3(0.20, 0.30, 0.52);
+                vec3 bounce = vec3(0.13, 0.12, 0.09);
+                vec3 ambient = mix(bounce, skyLight, n.y * 0.5 + 0.5);
 
-                float fog = smoothstep(uFogRange.x, uFogRange.y, length(uCameraPos - vWorld));
-                fragColor = vec4(mix(lit, uFogColor, fog), uAlpha);
+                vec3 lit = albedo * (ambient + sun * ndl);
+
+                // Gloss comes from the material's specular channel: matte
+                // rubber and painted carbon want very different highlights,
+                // and one fixed exponent gave them the same one.
+                float gloss = vColor.a;
+                vec3 h = normalize(l + v);
+                float power = mix(10.0, 240.0, gloss);
+                float spec = pow(max(dot(n, h), 0.0), power) * ndl;
+
+                // Grazing angles reflect more, whatever the material. This is
+                // what puts a bright edge along the top of the bodywork and
+                // makes it read as a hard, shiny surface.
+                float fresnel = pow(1.0 - max(dot(n, v), 0.0), 5.0);
+                lit += sun * spec * (0.04 + 0.96 * gloss) * (0.3 + 2.0 * fresnel);
+
+                // Distance haze, with the sun burning through it when looked
+                // towards — the horizon is never one flat colour in daylight.
+                vec3 fogLinear = uFogColor * uFogColor;
+                float towardsSun = max(dot(normalize(vWorld - uCameraPos), l), 0.0);
+                fogLinear = mix(fogLinear, vec3(1.0, 0.86, 0.66), pow(towardsSun, 8.0) * 0.55);
+
+                float fog = smoothstep(uFogRange.x, uFogRange.y, toCamera);
+                vec3 colour = mix(lit, fogLinear, fog);
+
+                fragColor = vec4(sqrt(tonemap(colour)), uAlpha);   // linear -> display
             }
         """
     }

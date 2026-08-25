@@ -375,4 +375,57 @@ object CarMesh {
             )
         }
     }
+
+    /**
+     * The car's shadow on the ground.
+     *
+     * Without one the car floats: nothing in the frame says it is resting on
+     * the road rather than hovering above it, and no amount of work on the
+     * lighting fixes that. This is not a cast shadow — there is no second pass
+     * here to render depth from the sun — but a soft patch under the car,
+     * drawn by multiplying the ground down, which is enough to sit it on the
+     * road at the angles a chase camera ever sees.
+     *
+     * The colours are the shadow's strength rather than its hue: white leaves
+     * the ground alone, grey darkens it. So the fan runs dark at the centre
+     * and white at the rim, and the edge disappears into the road.
+     */
+    fun shadow(): Mesh {
+        val b = MeshBuilder()
+        val up = Vec3(0f, 1f, 0f)
+        val y = 0.05f
+
+        // Roughly the plan shape of the car, a little wider than the tub so
+        // the wheels sit inside it.
+        val halfLength = 2.9f
+        val halfWidth = 1.05f
+
+        val centre = b.vertexCount
+        b.vertex(Vec3(0f, y, 0f), up, Material.rgb(0x6E6E6E, specular = 0f))
+
+        val segments = 24
+        val rings = listOf(0.55f to 0x8F8F8F, 1.0f to 0xFFFFFF)
+        val ringStart = IntArray(rings.size)
+        for ((r, ring) in rings.withIndex()) {
+            ringStart[r] = b.vertexCount
+            val (scale, grey) = ring
+            for (i in 0 until segments) {
+                val a = i.toFloat() / segments * 2f * PI.toFloat()
+                b.vertex(
+                    Vec3(sin(a) * halfWidth * scale, y, cos(a) * halfLength * scale),
+                    up, Material.rgb(grey, specular = 0f)
+                )
+            }
+        }
+
+        for (i in 0 until segments) {
+            val j = (i + 1) % segments
+            b.triangle(centre, ringStart[0] + j, ringStart[0] + i)
+            b.quad(
+                ringStart[0] + i, ringStart[0] + j,
+                ringStart[1] + j, ringStart[1] + i
+            )
+        }
+        return b.build()
+    }
 }
