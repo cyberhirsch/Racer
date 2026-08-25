@@ -99,6 +99,10 @@ echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
 adb emu sensor set acceleration "$GRAVITY" || echo "could not drive the emulator's sensor"
 sleep 3
 adb exec-out screencap -p > "$OUT/04-rolled.png"
+# Read the roll the app had at this moment, before the sensor goes back.
+APP_ROLL=$(adb logcat -d | grep -o "viewRoll=[-0-9.]*" | tail -1 | cut -d= -f2)
+APP_ROLL=${APP_ROLL:-0}
+echo "the app saw a roll of ${APP_ROLL} degrees"
 
 # Back to upright, so the last frame is a level reference.
 adb emu sensor set acceleration 0:9.81:0 || true
@@ -113,9 +117,6 @@ adb logcat -d > "$OUT/logcat.txt"
 VERDICT="$OUT/verdict.txt"
 : > "$VERDICT"
 
-# What the app thought the phone was doing when the rolled frame was taken.
-APP_ROLL=$(grep -o "viewRoll=[-0-9.]*" "$OUT/logcat.txt" | tail -2 | head -1 | cut -d= -f2)
-APP_ROLL=${APP_ROLL:-0}
 HORIZON_ROLLED=$(python3 scripts/horizon.py "$OUT/04-rolled.png" 2>&1 | tail -1)
 HORIZON_LEVEL=$(python3 scripts/horizon.py "$OUT/05-level.png" 2>&1 | tail -1)
 

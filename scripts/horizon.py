@@ -16,20 +16,49 @@ sys.path.insert(0, "scripts")
 from png import read_png
 
 
+# The sky is drawn by glClearColor with GlRenderer's SKY value and nothing
+# shades it, so sky pixels come out at exactly this colour. Matching it
+# precisely beats "bright and blueish", which also matches parts of the HUD.
+SKY = (143, 181, 222)
+TOLERANCE = 10
+
+
+def is_sky(r, g, b):
+    return (abs(r - SKY[0]) <= TOLERANCE
+            and abs(g - SKY[1]) <= TOLERANCE
+            and abs(b - SKY[2]) <= TOLERANCE)
+
+
 def sky_boundary(width, height, channels, pixels):
-    """For each sampled column, the first row from the top that is not sky."""
+    """
+    For each sampled column, the row where the sky ends.
+
+    Scans upward from the middle of the frame to the first sky pixel, rather
+    than downward from the top: the HUD sits over the sky, and scanning down
+    stops at the first chip it meets.
+    """
     points = []
     step = max(1, width // 160)
-    for x in range(int(width * 0.06), int(width * 0.94), step):
-        for y in range(0, int(height * 0.85)):
+    for x in range(int(width * 0.04), int(width * 0.96), step):
+        found = None
+        for y in range(int(height * 0.9), -1, -1):
             o = (y * width + x) * channels
-            r, g, b = pixels[o], pixels[o + 1], pixels[o + 2]
-            # Sky is bright and blue-dominant; road, grass, barriers and HUD
-            # are not.
-            if not (b > 110 and b > r + 8 and b > g + 4):
-                points.append((x, y))
+            if is_sky(pixels[o], pixels[o + 1], pixels[o + 2]):
+                found = y
                 break
+        if found is not None and found < height * 0.88:
+            points.append((x, found))
     return points
+
+
+def describe(width, height, channels, pixels):
+    """What the frame actually looks like, for when the fit finds nothing."""
+    out = []
+    for fx, fy in ((0.1, 0.05), (0.5, 0.1), (0.5, 0.3), (0.5, 0.5), (0.5, 0.8), (0.9, 0.05)):
+        x, y = int(width * fx), int(height * fy)
+        o = (y * width + x) * channels
+        out.append(f"({fx:.0%},{fy:.0%})=rgb({pixels[o]},{pixels[o+1]},{pixels[o+2]})")
+    return " ".join(out)
 
 
 def fit_angle(points):
@@ -43,6 +72,7 @@ def fit_angle(points):
 
     if len(points) < 20:
         raise SystemExit("FAIL: could not find the horizon (too few points)")
+
 
     ys = sorted(p[1] for p in points)
     median = ys[len(ys) // 2]
@@ -64,5 +94,10 @@ def fit_angle(points):
 
 if __name__ == "__main__":
     width, height, channels, pixels = read_png(sys.argv[1])
-    angle, used, median = fit_angle(sky_boundary(width, height, channels, pixels))
+    points = sky_boundary(width, height, channels, pixels)
+    if len(points) < 20:
+        print(f"HORIZON none ({len(points)} sky points in {width}x{height}); "
+              f"samples: {describe(width, height, channels, pixels)}")
+        raise SystemExit(1)
+    angle, used, median = fit_angle(points)
     print(f"HORIZON {angle:+.1f} deg (from {used} points, mean height {median}/{height})")
