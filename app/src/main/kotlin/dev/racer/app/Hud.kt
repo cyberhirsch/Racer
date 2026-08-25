@@ -91,7 +91,7 @@ fun Hud(
         when (game.state) {
             Game.State.MENU -> Menu(game, tiltAvailable, onStart)
             Game.State.COUNTDOWN, Game.State.RACING ->
-                Racing(game, frame, steering, onRecentre, onInvert, onPedals)
+                Racing(game, frame, steering, onRecentre, onInvert, onPedals, onRetry, onMenu)
             Game.State.FINISHED -> Result(game, finished = true, onNext = onNext, onMenu = onMenu)
             Game.State.FAILED -> Result(game, finished = false, onNext = onRetry, onMenu = onMenu)
         }
@@ -107,7 +107,9 @@ private fun Racing(
     steering: TiltSteering,
     onRecentre: () -> Unit,
     onInvert: () -> Unit,
-    onPedals: (throttle: Float, brake: Boolean) -> Unit
+    onPedals: (throttle: Float, brake: Boolean) -> Unit,
+    onRestart: () -> Unit,
+    onMenu: () -> Unit
 ) {
     // `frame` exists so that Compose cannot skip this composable: the game
     // state it draws lives outside Compose and changes without notice, so the
@@ -233,11 +235,29 @@ private fun Racing(
         }
 
         if (game.vehicle.offTrack && game.state == Game.State.RACING) {
+            // Two different messages, because they mean different things: one
+            // is costing you time, the other means the ground is about to run
+            // out and the car will bog down whatever you do.
+            val lost = game.beyondDeepGrass
             Text(
-                "OFF TRACK", color = Color(0xFFFFD166), fontSize = 12.sp,
+                if (lost) "TURN BACK" else "OFF TRACK",
+                color = if (lost) Color(0xFFFF5A45) else Color(0xFFFFD166),
+                fontSize = if (lost) 14.sp else 12.sp,
+                fontWeight = if (lost) FontWeight.Bold else FontWeight.Normal,
                 letterSpacing = 3.sp,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 56.dp)
             )
+        }
+
+        // Out at any time, without waiting for the fuel to run dry: a race you
+        // have already ruined is not worth sitting through, and there was no
+        // way out of one until now.
+        Row(
+            Modifier.align(Alignment.TopEnd),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            SmallButton("RESTART", onClick = onRestart)
+            SmallButton("MENU", onClick = onMenu)
         }
 
         Countdown(game, Modifier.align(Alignment.TopEnd))

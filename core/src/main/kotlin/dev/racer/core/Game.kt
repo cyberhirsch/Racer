@@ -84,6 +84,7 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         failReason = null
         newBest = false
         state = State.MENU
+        beyondDeepGrass = false
     }
 
     fun startCountdown(seconds: Double = 3.999) {
@@ -138,12 +139,49 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         vehicle.offTrack = surf.offTrack
 
         vehicle.step(STEP, input)
+        holdInsideTheWorld(t)
 
         if (vehicle.fuel <= 0.0) {
             fail("OUT OF FUEL")
             return false
         }
         return true
+    }
+
+    /**
+     * Keep the car inside the ground that exists.
+     *
+     * Past the deep grass the going gets heavier the further out you are, so a
+     * car pointed at the horizon slows to a crawl and stops of its own accord.
+     * It can always be driven back; nothing pushes it anywhere.
+     *
+     * The clamp at the very edge is a backstop, not the mechanism. Reaching it
+     * means the drag above failed to stop the car — at which point the choice
+     * is between an abrupt halt and driving off the end of the world.
+     */
+    /** True while the car is out in the deep grass, for the HUD's warning. */
+    var beyondDeepGrass = false
+        private set
+
+    private fun holdInsideTheWorld(t: Track) {
+        // Where the car has ended up, not where it was before the step: this
+        // is the last thing standing between it and the end of the ground.
+        val loc = t.locate(vehicle.x, vehicle.z, trackHint)
+        val beyond = abs(loc.lateral) - t.deepGrass
+        beyondDeepGrass = beyond > 0.0
+        if (beyond <= 0.0) return
+
+        // 0 at the edge of the deep grass, 1 where the ground runs out.
+        val k = (beyond / max(1.0, t.edge - t.deepGrass)).coerceIn(0.0, 1.0)
+        vehicle.scrub(1.0 - exp(-(1.2 + 9.0 * k) * STEP))
+
+        if (abs(loc.lateral) <= t.edge) return
+
+        val f = loc.frame
+        val side = if (loc.lateral >= 0) 1.0 else -1.0
+        vehicle.x = f.pos.x + f.right.x * t.edge * side
+        vehicle.z = f.pos.z + f.right.z * t.edge * side
+        vehicle.scrub(1.0)
     }
 
     private fun checkProgress() {

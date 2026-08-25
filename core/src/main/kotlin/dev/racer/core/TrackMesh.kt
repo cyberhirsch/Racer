@@ -29,9 +29,6 @@ object TrackMesh {
     private val CHECK_DARK = Material.rgb(0x111111, specular = 0.1f)
     private val CHECK_LIGHT = Material.rgb(0xF5F5F5, specular = 0.1f)
 
-    /** How far the grass reaches beyond the gravel, in metres. */
-    private const val GRASS_APRON = 90.0
-
     class Gate(val mesh: Mesh, val frameIndex: Int, val finish: Boolean)
 
     class Built(val ground: Mesh, val gates: List<Gate>)
@@ -46,7 +43,7 @@ object TrackMesh {
         // The grass runs a long way out, because there is nothing to stop you
         // going there: no barriers anywhere on the circuit. Driving off is
         // allowed, and it should not end at the edge of a green rug.
-        ribbon(b, track, -(track.runoff + GRASS_APRON), track.runoff + GRASS_APRON, -0.14f, GRASS)
+        ribbon(b, track, -(track.runoff + Track.GRASS_APRON), track.runoff + Track.GRASS_APRON, -0.14f, GRASS)
         ribbon(b, track, -track.runoff, track.runoff, -0.02f, GRAVEL)
         ribbon(b, track, -track.halfWidth, track.halfWidth, 0.02f, ROAD)
         ribbon(b, track, -track.halfWidth + 0.15, -track.halfWidth + 0.45, 0.035f, LINE)

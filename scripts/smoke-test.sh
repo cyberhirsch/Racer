@@ -165,7 +165,30 @@ DRAW_ROLL_LEVEL=${DRAW_ROLL_LEVEL:-99}
 echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 
 
-cat "$OUT/logcat-race.txt" > "$OUT/logcat.txt" 2>/dev/null || true
+# --- the way out ------------------------------------------------------------
+# A race you have ruined has to be escapable without waiting for the tank to
+# empty. Both buttons are pressed for real, through the accessibility tree, and
+# the game's own state log says whether they did anything.
+echo "== checking the restart and menu buttons =="
+# The log is put aside and cleared before each press, so that a state change
+# from earlier in the run cannot be mistaken for the button having worked.
+adb logcat -d > "$OUT/logcat-tilt.txt"
+adb logcat -c
+RESTART_WORKED=no
+MENU_WORKED=no
+if tap_text "RESTART"; then
+    sleep 3
+    adb logcat -d | grep -q "state -> COUNTDOWN" && RESTART_WORKED=yes
+fi
+adb logcat -d >> "$OUT/logcat-tilt.txt"
+adb logcat -c
+if tap_text "MENU"; then
+    sleep 3
+    adb logcat -d | grep -q "state -> MENU" && MENU_WORKED=yes
+fi
+echo "restart button: $RESTART_WORKED; menu button: $MENU_WORKED"
+
+cat "$OUT/logcat-race.txt" "$OUT/logcat-tilt.txt" > "$OUT/logcat.txt" 2>/dev/null || true
 adb logcat -d >> "$OUT/logcat.txt"
 
 # Gather the evidence first and write it to a file. Checks come afterwards, so
@@ -206,6 +229,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE horizon in frame (informational; barriers and fog make this noisy):"
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
     echo "SMOKE   upright: $HORIZON_LEVEL"
+    echo "SMOKE buttons: restart=$RESTART_WORKED menu=$MENU_WORKED"
     echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
 } >> "$VERDICT"
 
@@ -233,6 +257,8 @@ awk -v t="$PEAK_THROTTLE" 'BEGIN { exit (t >= 0.6 ? 0 : 1) }' || {
     FAILED=1
 }
 [ "$FOREGROUND" = no ] && { echo "FAIL: the app is no longer in the foreground."; FAILED=1; }
+[ "$RESTART_WORKED" = no ] && { echo "FAIL: the RESTART button did not start the race again."; FAILED=1; }
+[ "$MENU_WORKED" = no ] && { echo "FAIL: the MENU button did not return to the menu."; FAILED=1; }
 
 python3 - "$HUD_FUEL" "$LOG_FUEL" <<'HUD' || FAILED=1
 import sys

@@ -114,6 +114,20 @@ class Vehicle {
 
     private var shiftTimer = 0.0
 
+    /**
+     * Scrub off a fraction of the car's motion, as heavy ground does.
+     *
+     * Not a collision: nothing is reflected and no energy comes back. The car
+     * simply loses speed, which is what deep grass does to it.
+     */
+    fun scrub(fraction: Double) {
+        val keep = (1.0 - fraction).coerceIn(0.0, 1.0)
+        vx *= keep
+        vy *= keep
+        yawRate *= keep
+        speed = abs(vx)
+    }
+
     fun reset(x: Double = 0.0, z: Double = 0.0, yaw: Double = 0.0) {
         this.x = x; this.z = z; this.yaw = yaw
         vx = 0.0; vy = 0.0; yawRate = 0.0

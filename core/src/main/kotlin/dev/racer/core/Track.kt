@@ -134,6 +134,21 @@ class Track(val cfg: LevelConfig) {
      */
     val runoff = halfWidth + 3.0
 
+    /**
+     * Where the ground runs out.
+     *
+     * Taking the barriers away made it possible to drive off the circuit,
+     * which is the point — but also to keep going until the world ends, which
+     * is not. Past [deepGrass] the going turns heavy and gets heavier, so a
+     * car aimed at the horizon slows to walking pace and stops well short of
+     * [edge], where the mown grass finishes and nothing further is drawn.
+     *
+     * Nothing here is a wall to bounce off: it is somewhere you can go, and
+     * regret, and drive back from.
+     */
+    val deepGrass = runoff + 40.0
+    val edge = runoff + GRASS_APRON - 6.0
+
     val frames: List<Frame>
     val curvature: DoubleArray
     val length: Double
@@ -186,7 +201,16 @@ class Track(val cfg: LevelConfig) {
         return Location(best, lateral, f, curvature[best])
     }
 
-    class Surface(val loc: Location, val grip: Double, val offTrack: Boolean)
+    /**
+     * @param beyond how far past [deepGrass] the car is, in metres; 0 anywhere
+     *   it can still drive normally.
+     */
+    class Surface(
+        val loc: Location,
+        val grip: Double,
+        val offTrack: Boolean,
+        val beyond: Double
+    )
 
     /**
      * Grip for a car position.
@@ -205,7 +229,7 @@ class Track(val cfg: LevelConfig) {
             offTrack = true
             grip = max(GRASS_GRIP, 1.0 - (off - halfWidth) * 0.28)
         }
-        return Surface(loc, grip, offTrack)
+        return Surface(loc, grip, offTrack, max(0.0, off - deepGrass))
     }
 
     /** Signed lateral offset of the finish line, for the finish gate mesh. */
@@ -216,6 +240,9 @@ class Track(val cfg: LevelConfig) {
 
         /** All the grip there is once you are well off the circuit. */
         const val GRASS_GRIP = 0.35
+
+        /** How far the grass reaches beyond the gravel, in metres. */
+        const val GRASS_APRON = 90.0
         private const val SEARCH_SPAN = 40
         private const val FRAME_SPACING = 3.0
 
