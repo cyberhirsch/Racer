@@ -109,6 +109,23 @@ class Mat4(val m: FloatArray = identityValues()) {
             return Mat4(r)
         }
 
+        /**
+         * View matrix with the camera rolled about its own view axis.
+         *
+         * Used to cancel the phone's rotation so the horizon stays level. Kept
+         * here rather than in the renderer because a roll sign is very easy to
+         * get backwards, and here it can be tested.
+         */
+        fun lookAtRolled(eye: Vec3, target: Vec3, worldUp: Vec3, rollRadians: Float): Mat4 {
+            val forward = (target - eye).normalized()
+            var right = forward.cross(worldUp)
+            if (right.length() < 1e-4f) right = forward.cross(Vec3(1f, 0f, 0f))
+            right = right.normalized()
+            val up = right.cross(forward).normalized()
+            val rolled = up * cos(rollRadians) + right * sin(rollRadians)
+            return lookAt(eye, target, rolled)
+        }
+
         fun lookAt(eye: Vec3, target: Vec3, up: Vec3): Mat4 {
             val f = (target - eye).normalized()
             val s = f.cross(up).normalized()

@@ -133,7 +133,9 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
 
 {
     echo "SMOKE game log:"
-    grep -E "Racer  *: " "$OUT/logcat.txt" | tail -18 | sed 's/^/SMOKE   /' || true
+    grep -E "Racer  *: " "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true
+    echo "SMOKE what the renderer drew with:"
+    grep -o "draw roll=[-0-9.]* deg" "$OUT/logcat.txt" | tail -6 | sed 's/^/SMOKE   /' || true
     if [ "$CRASHED" = yes ]; then
         echo "SMOKE crash:"
         grep -A 12 -E "FATAL EXCEPTION" "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true

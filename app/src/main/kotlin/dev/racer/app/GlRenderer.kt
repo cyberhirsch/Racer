@@ -47,6 +47,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     private var width = 1
     private var height = 1
     private var lastFrameNanos = 0L
+    private var frameCounter = 0
 
     /**
      * Called on the GL thread at the start of every frame with the real elapsed
@@ -112,14 +113,18 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         val cam = game.camera(frameDelta, aspect)
         val projection = Mat4.perspective(cam.fovDegrees * PI.toFloat() / 180f, aspect, 0.4f, 1200f)
         // Roll the camera to cancel the phone's rotation, so the horizon stays
-        // level for the person holding it. Rotate the up vector about the view
-        // axis: the image turns the opposite way to the camera, which is
-        // exactly the compensation wanted.
-        val forward = (cam.target - cam.eye).normalized()
-        val right = forward.cross(Vec3(0f, 1f, 0f)).normalized()
-        val up = right.cross(forward).normalized()
-        val rolled = up * kotlin.math.cos(cam.rollRadians) + right * kotlin.math.sin(cam.rollRadians)
-        val view = Mat4.lookAt(cam.eye, cam.target, rolled)
+        // level for the person holding it. The maths lives in :core, where
+        // CameraRollTest measures the angle the horizon actually comes out at;
+        // a roll sign is far too easy to get backwards to keep it here.
+        val view = Mat4.lookAtRolled(cam.eye, cam.target, Vec3(0f, 1f, 0f), cam.rollRadians)
+
+        // Once a second, report what the renderer is actually drawing with.
+        // The app can read the right roll from the sensor and still draw a
+        // level frame, and only this tells the two apart.
+        if (++frameCounter % 60 == 0) {
+            android.util.Log.i("Racer", "draw roll=%.1f deg fov=%.0f".format(
+                Math.toDegrees(cam.rollRadians.toDouble()), cam.fovDegrees))
+        }
         val viewProjection = projection * view
 
         GLES30.glUseProgram(program)
