@@ -44,6 +44,15 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 
 adb logcat -c
 
+# The runner has no GPU: every pixel is drawn on the CPU, and at the emulator's
+# native 2340x1080 that is two and a half million of them a frame. This is a
+# test of whether the game works, not of how fast it draws, so give it a
+# quarter of the pixels and let it run at a sane rate. What the renderer
+# manages here says nothing about a real phone; the frame rate it logs is the
+# number to watch for that.
+adb shell wm size 1280x720 || true
+adb shell wm density 320 || true
+
 echo "== launching =="
 adb shell am start -W -n "$ACTIVITY"
 sleep 8
@@ -268,8 +277,10 @@ adb logcat -d >> "$OUT/logcat.txt"
 VERDICT="$OUT/verdict.txt"
 : > "$VERDICT"
 
-HORIZON_ROLLED=$(python3 scripts/horizon.py "$OUT/04-rolled.png" 2>&1 | tail -1)
-HORIZON_LEVEL=$(python3 scripts/horizon.py "$OUT/05-level.png" 2>&1 | tail -1)
+# Informational only, and it keys on the sky's exact colour — which changes
+# whenever the lighting does. It must never end the run.
+HORIZON_ROLLED=$(python3 scripts/horizon.py "$OUT/04-rolled.png" 2>&1 | tail -1 || true)
+HORIZON_LEVEL=$(python3 scripts/horizon.py "$OUT/05-level.png" 2>&1 | tail -1 || true)
 
 TOP=$(grep -o "speed=[0-9]*kmh" "$OUT/logcat.txt" | grep -o "[0-9]*" | sort -n | tail -1)
 TOP=${TOP:-0}
@@ -400,5 +411,8 @@ print("OK: a real tilt reaches the renderer, and the camera rolls against it.")
 TILT
 
 [ "$FAILED" -eq 0 ] || exit 1
+
+adb shell wm size reset || true
+adb shell wm density reset || true
 
 echo "== smoke test passed =="

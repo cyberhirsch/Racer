@@ -68,7 +68,7 @@ class GameActivity : ComponentActivity() {
     private var tickTimer = 0.0
 
     private var lastLoggedState: Game.State? = null
-    private var logTimer = 0.0
+    private var lastHeartbeat = 0L
 
     /** Decaying blip that revs the engine on each beat of the countdown. */
     private var revBlip = 0.0
@@ -148,7 +148,7 @@ class GameActivity : ComponentActivity() {
         if (wasRacing && game.state == Game.State.FINISHED) vibrate(120)
 
         pokeHud(dt)
-        logProgress(dt)
+        logProgress()
     }
 
     private fun pokeHud(dt: Double) {
@@ -211,16 +211,20 @@ class GameActivity : ComponentActivity() {
      * — touch, physics, rendering — is actually working, which a screenshot
      * alone cannot show.
      */
-    private fun logProgress(dt: Double) {
+    private fun logProgress() {
         if (game.state != lastLoggedState) {
             lastLoggedState = game.state
             Log.i(TAG, "state -> ${game.state}")
-            logTimer = 0.0
+            lastHeartbeat = 0L
         }
         if (game.state == Game.State.RACING) {
-            logTimer += dt
-            if (logTimer >= 1.0) {
-                logTimer = 0.0
+            // Wall-clock seconds, not simulated ones. Driving this from the
+            // physics step meant that when the frame rate collapsed the log
+            // went quiet — so a renderer running at two frames a second looked
+            // exactly like a hung app, twice.
+            val now = System.nanoTime()
+            if (now - lastHeartbeat >= 1_000_000_000L) {
+                lastHeartbeat = now
                 Log.i(
                     TAG,
                     "racing speed=${game.speedKmh}kmh gear=${game.gearLabel} " +
