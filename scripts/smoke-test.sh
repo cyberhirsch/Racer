@@ -275,7 +275,11 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE where the app put them: RESTART [${RESTART_RECT:-unknown}] MENU [${MENU_RECT:-unknown}]"
     echo "SMOKE what the tree says about the two buttons:"
     echo "$BUTTON_NODES" | cut -c1-400 | sed 's/^/SMOKE /'
+    # The frame itself, last and on one line. Judging how the game looks needs
+    # the picture, and three-bit colour — fine for checking the layout — throws
+    # away exactly the gradients and shading that the question is about.
     echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
+    python3 scripts/png.py "$OUT/02-racing.png" 200 6 || true
 } >> "$VERDICT"
 
 # Previews are generated unconditionally: a failing run is exactly when someone

@@ -108,10 +108,13 @@ def posterize(rgb, bits=3):
 
 if __name__ == '__main__':
     # Usage: png.py <screenshot.png> <target-width>
+    # Usage: png.py <screenshot.png> [target-width] [colour-bits]
     path = sys.argv[1]
     target = int(sys.argv[2]) if len(sys.argv) > 2 else 200
+    bits = int(sys.argv[3]) if len(sys.argv) > 3 else 3
     w, h, rgb = downscale(path, target)
-    encoded = base64.b64encode(write_png(None, w, h, posterize(rgb))).decode()
+    shown = rgb if bits >= 8 else posterize(rgb, bits)
+    encoded = base64.b64encode(write_png(None, w, h, shown)).decode()
     # Emit the whole image on one line. Log viewers and log APIs window by
     # line count, so wrapping this would push the start of the image out of
     # view exactly when the picture is worth looking at.
