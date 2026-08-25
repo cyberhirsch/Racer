@@ -49,6 +49,8 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     private var width = 1
     private var height = 1
     private var lastFrameNanos = 0L
+    private var framesThisSecond = 0
+    private var secondsOfFrames = 0.0
     private var frameCounter = 0
     private var lastLoggedRoll = 0.0
 
@@ -133,6 +135,18 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         // changes materially. The app can read the right roll from the sensor
         // and still draw a level frame; only this tells the two apart, and it
         // is what the emulator test asserts on.
+        // How fast is this actually drawing? The game's own heartbeat runs on
+        // simulated time, so when the frame rate collapses the log goes quiet
+        // rather than saying so — which is exactly how an over-expensive
+        // shader looked like a hung app for two rounds.
+        framesThisSecond++
+        secondsOfFrames += elapsed
+        if (secondsOfFrames >= 2.0) {
+            android.util.Log.i("Racer", "render %.1f fps".format(framesThisSecond / secondsOfFrames))
+            framesThisSecond = 0
+            secondsOfFrames = 0.0
+        }
+
         val rollDegrees = Math.toDegrees(cam.rollRadians.toDouble())
         if (kotlin.math.abs(rollDegrees - lastLoggedRoll) > 3.0 || ++frameCounter % 120 == 0) {
             lastLoggedRoll = rollDegrees
@@ -417,22 +431,35 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
                 // Gloss comes from the material's specular channel: matte
                 // rubber and painted carbon want very different highlights,
                 // and one fixed exponent gave them the same one.
+                // Two fixed exponents, reached by squaring, and mixed by the
+                // material's gloss. A pow with a computed exponent cannot be
+                // folded away by the compiler and has to be evaluated per
+                // pixel; on the software rasteriser CI runs on that alone was
+                // enough to drop the frame rate to a crawl.
                 float gloss = vColor.a;
                 vec3 h = normalize(l + v);
-                float power = mix(10.0, 240.0, gloss);
-                float spec = pow(max(dot(n, h), 0.0), power) * ndl;
+                float nh = max(dot(n, h), 0.0);
+                float nh2 = nh * nh;
+                float nh4 = nh2 * nh2;
+                float nh8 = nh4 * nh4;
+                float nh16 = nh8 * nh8;
+                float spec = mix(nh8, nh16 * nh16, gloss) * ndl;
 
                 // Grazing angles reflect more, whatever the material. This is
                 // what puts a bright edge along the top of the bodywork and
                 // makes it read as a hard, shiny surface.
-                float fresnel = pow(1.0 - max(dot(n, v), 0.0), 5.0);
+                float grazing = 1.0 - max(dot(n, v), 0.0);
+                float g2 = grazing * grazing;
+                float fresnel = g2 * g2 * grazing;
                 lit += sun * spec * (0.04 + 0.96 * gloss) * (0.3 + 2.0 * fresnel);
 
                 // Distance haze, with the sun burning through it when looked
                 // towards — the horizon is never one flat colour in daylight.
                 vec3 fogLinear = uFogColor * uFogColor;
                 float towardsSun = max(dot(normalize(vWorld - uCameraPos), l), 0.0);
-                fogLinear = mix(fogLinear, vec3(1.0, 0.86, 0.66), pow(towardsSun, 8.0) * 0.55);
+                float s2 = towardsSun * towardsSun;
+                float s8 = s2 * s2; s8 = s8 * s8;
+                fogLinear = mix(fogLinear, vec3(1.0, 0.86, 0.66), s8 * 0.55);
 
                 float fog = smoothstep(uFogRange.x, uFogRange.y, toCamera);
                 vec3 colour = mix(lit, fogLinear, fog);

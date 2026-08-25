@@ -136,10 +136,12 @@ adb exec-out screencap -p > "$OUT/03-racing-later.png"
 # like with like. Reading the screen dump instead does not work: the
 # accessibility tree lags well behind the display and reports the starting
 # numbers either way.
+# Neither of these may end the run when it finds nothing: they are evidence,
+# and a missing heartbeat is itself worth reporting rather than exiting on.
 HUD_FUEL=$(adb logcat -d | grep -o "hud speed=[0-9]*kmh fuel=[0-9.]*kg" | tail -1 \
-    | grep -o "fuel=[0-9.]*" | cut -d= -f2)
+    | grep -o "fuel=[0-9.]*" | cut -d= -f2 || true)
 LOG_FUEL=$(adb logcat -d | grep -o "racing speed=.*fuel=[0-9.]*kg" | tail -1 \
-    | grep -o "fuel=[0-9.]*" | cut -d= -f2)
+    | grep -o "fuel=[0-9.]*" | cut -d= -f2 || true)
 HUD_FUEL=${HUD_FUEL:-none}; LOG_FUEL=${LOG_FUEL:-none}
 echo "the HUD is drawing ${HUD_FUEL} kg; the game is at ${LOG_FUEL} kg"
 
@@ -295,6 +297,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     grep -oE "hud speed=.*|ui thread ran, tick=[0-9]+" "$OUT/logcat.txt" | tail -8 | sed 's/^/SMOKE   /' || true
     echo "SMOKE tilt: injected ${ROLL_DEG} deg -> app read ${APP_ROLL} deg -> renderer drew ${DRAW_ROLL} deg (must oppose)"
     echo "SMOKE audio: $(grep -c "engine audio started" "$OUT/logcat.txt") engine synth start(s)"
+    echo "SMOKE frame rate: $(grep -o "render [0-9.]* fps" "$OUT/logcat.txt" | tail -4 | tr '\n' ' ' || true)"
     echo "SMOKE tilt: upright -> renderer drew ${DRAW_ROLL_LEVEL} deg"
     echo "SMOKE horizon in frame (informational; barriers and fog make this noisy):"
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
