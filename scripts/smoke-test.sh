@@ -21,12 +21,20 @@ rm -f "$VERDICT"
 # This script runs under set -e, and a grep that matches nothing is enough to
 # end it. When that happens mid-run there is otherwise no verdict at all and
 # the job says only "No such file or directory", which explains nothing. Leave
-# something behind that does.
+# something behind that does — including which line gave up, because "exit 1"
+# on its own cost a round to chase.
+FAILED_AT="nothing recorded"
+trap 'FAILED_AT="line $LINENO: $BASH_COMMAND"' ERR
 trap 'code=$?; if [ "$code" -ne 0 ] && [ ! -s "$VERDICT" ]; then
     {
         echo "SMOKE the run stopped early (exit $code), before it could reach a verdict"
+        echo "SMOKE it gave up at: $FAILED_AT"
         echo "SMOKE last of the game log:"
-        adb logcat -d 2>/dev/null | grep -E "Racer  *: " | tail -12 | sed "s/^/SMOKE   /" || true
+        adb logcat -d 2>/dev/null | grep -E "Racer  *: " | tail -10 | sed "s/^/SMOKE   /" || true
+        echo "SMOKE anything that looks like a crash:"
+        adb logcat -d 2>/dev/null \
+            | grep -E "FATAL EXCEPTION|ANR in|signal [0-9]+|SIGSEGV|SIGABRT|beginning of crash|dev.racer.app.*died|Shader|Program link" \
+            | tail -12 | sed "s/^/SMOKE   /" || true
     } > "$VERDICT" 2>/dev/null || true
 fi' EXIT
 
@@ -266,7 +274,7 @@ TOP=${TOP:-0}
 REACHED_RACING=no
 grep -q "state -> RACING" "$OUT/logcat.txt" && REACHED_RACING=yes
 CRASHED=no
-grep -qE "FATAL EXCEPTION|ANR in $PACKAGE" "$OUT/logcat.txt" && CRASHED=yes
+grep -qE "FATAL EXCEPTION|ANR in $PACKAGE|SIGSEGV|SIGABRT|beginning of crash" "$OUT/logcat.txt" && CRASHED=yes
 SHADER=no
 grep -qE "Shader compile failed|Program link failed" "$OUT/logcat.txt" && SHADER=yes
 FOREGROUND=no

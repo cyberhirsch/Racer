@@ -364,15 +364,13 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
                 return fract(p.x * p.y);
             }
 
+            // One sample per 30cm cell, no smoothing between them. A proper
+            // interpolated noise costs four hashes a pixel, and this runs on a
+            // software rasteriser in CI where that is not free — at the size
+            // the cells appear on screen, and with the distance fade below,
+            // the difference is invisible and the cost is a quarter.
             float grain(vec2 p) {
-                vec2 i = floor(p);
-                vec2 f = fract(p);
-                f = f * f * (3.0 - 2.0 * f);
-                float a = hash21(i);
-                float b = hash21(i + vec2(1.0, 0.0));
-                float c = hash21(i + vec2(0.0, 1.0));
-                float d = hash21(i + vec2(1.0, 1.0));
-                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+                return hash21(floor(p));
             }
 
             // Narkowicz's fit of the ACES curve: highlights roll off instead
@@ -402,9 +400,11 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
                 // which reads as plastic sheeting. A little noise in the
                 // albedo, on near-horizontal surfaces only and faded out with
                 // distance so it never sparkles, reads as texture.
-                float flat_ = smoothstep(0.75, 0.95, abs(n.y));
-                float near = 1.0 - smoothstep(15.0, 90.0, toCamera);
-                albedo *= 1.0 + (grain(vWorld.xz * 2.7) - 0.5) * 0.22 * flat_ * near;
+                float detail = smoothstep(0.75, 0.95, abs(n.y)) *
+                    (1.0 - smoothstep(15.0, 70.0, toCamera));
+                if (detail > 0.01) {
+                    albedo *= 1.0 + (grain(vWorld.xz * 3.2) - 0.5) * 0.24 * detail;
+                }
 
                 float ndl = max(dot(n, l), 0.0);
                 vec3 sun = vec3(1.0, 0.95, 0.86) * 2.6;
