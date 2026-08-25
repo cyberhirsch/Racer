@@ -29,25 +29,31 @@ def is_sky(r, g, b):
             and abs(b - SKY[2]) <= TOLERANCE)
 
 
-def sky_boundary(width, height, channels, pixels):
+def sky_column_heights(width, height, channels, pixels):
     """
-    For each sampled column, the row where the sky ends.
+    How much sky each column contains.
 
-    Scans upward from the middle of the frame to the first sky pixel, rather
-    than downward from the top: the HUD sits over the sky, and scanning down
-    stops at the first chip it meets.
+    Counting sky pixels per column, rather than hunting for the first one, is
+    what makes this survive a real frame: barriers, the start gantry and poles
+    break the skyline, and fog blends distant ground to exactly the sky colour.
+    A single boundary pixel per column jumps hundreds of pixels when a post gets
+    in the way; a count only loses that post's area.
+
+    The sky sits at the top of the frame, so the count is the height of the
+    boundary, and its slope across the frame is the tilt.
     """
     points = []
-    step = max(1, width // 160)
-    for x in range(int(width * 0.04), int(width * 0.96), step):
-        found = None
-        for y in range(int(height * 0.9), -1, -1):
+    step = max(1, width // 200)
+    for x in range(0, width, step):
+        count = 0
+        for y in range(height):
             o = (y * width + x) * channels
             if is_sky(pixels[o], pixels[o + 1], pixels[o + 2]):
-                found = y
-                break
-        if found is not None and found < height * 0.88:
-            points.append((x, found))
+                count += 1
+        # Columns that are entirely sky or entirely ground say nothing about
+        # where the boundary is; they only say it is off the top or bottom.
+        if 0 < count < height - 1:
+            points.append((x, count))
     return points
 
 
@@ -107,7 +113,7 @@ def samples(points, count=8):
 
 if __name__ == "__main__":
     width, height, channels, pixels = read_png(sys.argv[1])
-    points = sky_boundary(width, height, channels, pixels)
+    points = sky_column_heights(width, height, channels, pixels)
     if len(points) < 20:
         print(f"HORIZON none ({len(points)} sky points in {width}x{height}); "
               f"samples: {describe(width, height, channels, pixels)}")
