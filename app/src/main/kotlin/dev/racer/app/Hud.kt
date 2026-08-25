@@ -35,6 +35,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Brush
@@ -262,8 +264,8 @@ private fun Racing(
             Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            SmallButton("RESTART", onClick = onRestart)
-            SmallButton("MENU", onClick = onMenu)
+            SmallButton("RESTART", modifier = Modifier.reportRect("RESTART"), onClick = onRestart)
+            SmallButton("MENU", modifier = Modifier.reportRect("MENU"), onClick = onMenu)
         }
 
         Countdown(game, Modifier.align(Alignment.TopEnd))
@@ -288,6 +290,25 @@ private fun reportWhatIsDrawn(game: Game, tick: Int) {
                 "countdown=${game.countdownLabel ?: "-"} tick=$tick"
         )
     }
+}
+
+/**
+ * Log where a control has actually been placed on screen.
+ *
+ * The emulator has to press these buttons to prove they work, and the
+ * accessibility tree it would normally read them from is not reliable here:
+ * RESTART came back with real bounds while MENU, beside it in the same row and
+ * the same kind of node, came back as [0,0][0,0] — the same bounds-less report
+ * that made the gas slider look unpressable. Layout knows exactly where each
+ * control is, so it says so.
+ */
+private fun Modifier.reportRect(name: String): Modifier = this.onGloballyPositioned { c ->
+    val at = c.positionInWindow()
+    android.util.Log.i(
+        "Racer",
+        "button $name rect=${at.x.toInt()},${at.y.toInt()}," +
+            "${(at.x + c.size.width).toInt()},${(at.y + c.size.height).toInt()}"
+    )
 }
 
 /** The last reading from each control, so either can report on its own. */
@@ -574,9 +595,15 @@ private fun CtaButton(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SmallButton(text: String, active: Boolean = false, wide: Boolean = false, onClick: () -> Unit) {
+private fun SmallButton(
+    text: String,
+    active: Boolean = false,
+    wide: Boolean = false,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     Box(
-        Modifier.let { if (wide) it.fillMaxWidth() else it }
+        modifier.let { if (wide) it.fillMaxWidth() else it }
             .clip(RoundedCornerShape(7.dp))
             .background(if (active) RedDeep else Color(0xA60A0C10))
             .border(1.dp, if (active) Red else Color(0x24FFFFFF), RoundedCornerShape(7.dp))

@@ -173,6 +173,23 @@ DRAW_ROLL_LEVEL=${DRAW_ROLL_LEVEL:-99}
 echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 
 
+# The app reports where it put its buttons, which is the one source that has
+# been reliable: read them now, before any of the log clearing below.
+RESTART_RECT=$(adb logcat -d | grep -o "button RESTART rect=[0-9,]*" | tail -1 | cut -d= -f2)
+MENU_RECT=$(adb logcat -d | grep -o "button MENU rect=[0-9,]*" | tail -1 | cut -d= -f2)
+echo "the app placed RESTART at [${RESTART_RECT:-unknown}] and MENU at [${MENU_RECT:-unknown}]"
+
+# Press the centre of a rectangle the app reported.
+tap_rect() {
+    local rect="$1" name="$2"
+    [ -n "$rect" ] || { echo "no rectangle reported for $name"; return 1; }
+    local x1 y1 x2 y2
+    IFS=, read -r x1 y1 x2 y2 <<< "$rect"
+    TAP_X=$(( (x1 + x2) / 2 )); TAP_Y=$(( (y1 + y2) / 2 ))
+    echo "pressing $name at ${TAP_X},${TAP_Y} (the app put it at $rect)"
+    adb shell input tap "$TAP_X" "$TAP_Y"
+}
+
 # --- the way out ------------------------------------------------------------
 # A race you have ruined has to be escapable without waiting for the tank to
 # empty. Both buttons are pressed for real, through the accessibility tree, and
@@ -184,7 +201,7 @@ adb logcat -d > "$OUT/logcat-tilt.txt"
 adb logcat -c
 RESTART_WORKED=no
 MENU_WORKED=no
-if tap_text "RESTART"; then
+if tap_rect "$RESTART_RECT" RESTART; then
     sleep 3
     adb logcat -d | grep -q "state -> COUNTDOWN" && RESTART_WORKED=yes
 fi
@@ -204,9 +221,9 @@ BUTTON_NODES=$(adb shell cat /sdcard/ui4.xml 2>/dev/null | tr '<' '\n' \
     | grep -E 'text="(MENU|RESTART)"' | sed 's/^/    /' | head -6)
 [ -n "$BUTTON_NODES" ] || BUTTON_NODES="    neither button is in the tree at all"
 
-MENU_WHERE="not found in the tree"
-if tap_text "MENU"; then
-    MENU_WHERE="pressed at ${TAP_X},${TAP_Y} of ${w}x${h}, bounds ${TAP_BOUNDS}"
+MENU_WHERE="the app never reported where it is"
+if tap_rect "$MENU_RECT" MENU; then
+    MENU_WHERE="pressed at ${TAP_X},${TAP_Y} of ${w}x${h}, app rect ${MENU_RECT}"
     sleep 3
     adb logcat -d | grep -q "state -> MENU" && MENU_WORKED=yes
 fi
@@ -255,6 +272,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
     echo "SMOKE   upright: $HORIZON_LEVEL"
     echo "SMOKE buttons: restart=$RESTART_WORKED menu=$MENU_WORKED ($MENU_WHERE)"
+    echo "SMOKE where the app put them: RESTART [${RESTART_RECT:-unknown}] MENU [${MENU_RECT:-unknown}]"
     echo "SMOKE what the tree says about the two buttons:"
     echo "$BUTTON_NODES" | cut -c1-400 | sed 's/^/SMOKE /'
     echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
