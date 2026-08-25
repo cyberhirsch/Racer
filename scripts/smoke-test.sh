@@ -40,8 +40,10 @@ tap_text() {
     local nums; nums=$(echo "$bounds" | grep -o '[0-9]*')
     local x1 y1 x2 y2
     read -r x1 y1 x2 y2 <<< "$(echo "$nums" | tr '\n' ' ')"
-    echo "tapping '$label' at $(( (x1 + x2) / 2 )),$(( (y1 + y2) / 2 ))"
-    adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))
+    TAP_X=$(( (x1 + x2) / 2 )); TAP_Y=$(( (y1 + y2) / 2 ))
+    TAP_BOUNDS="$bounds"
+    echo "tapping '$label' at ${TAP_X},${TAP_Y}"
+    adb shell input tap "$TAP_X" "$TAP_Y"
 }
 
 echo "== starting a race =="
@@ -188,15 +190,13 @@ fi
 sleep 6
 adb logcat -d >> "$OUT/logcat-tilt.txt"
 adb logcat -c
+MENU_WHERE="not found in the tree"
 if tap_text "MENU"; then
+    MENU_WHERE="pressed at ${TAP_X},${TAP_Y} of ${w}x${h}, bounds ${TAP_BOUNDS}"
     sleep 3
     adb logcat -d | grep -q "state -> MENU" && MENU_WORKED=yes
 fi
-if [ "$MENU_WORKED" = no ]; then
-    echo "the MENU press did nothing; this is what the button looks like to the tree:"
-    adb shell uiautomator dump /sdcard/ui4.xml >/dev/null 2>&1 || true
-    adb shell cat /sdcard/ui4.xml 2>/dev/null | tr '<' '\n' | grep 'text="MENU"' || echo "  no MENU node at all"
-fi
+echo "menu button: $MENU_WHERE"
 echo "restart button: $RESTART_WORKED; menu button: $MENU_WORKED"
 
 cat "$OUT/logcat-race.txt" "$OUT/logcat-tilt.txt" > "$OUT/logcat.txt" 2>/dev/null || true
@@ -240,7 +240,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE horizon in frame (informational; barriers and fog make this noisy):"
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
     echo "SMOKE   upright: $HORIZON_LEVEL"
-    echo "SMOKE buttons: restart=$RESTART_WORKED menu=$MENU_WORKED"
+    echo "SMOKE buttons: restart=$RESTART_WORKED menu=$MENU_WORKED ($MENU_WHERE)"
     echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
 } >> "$VERDICT"
 

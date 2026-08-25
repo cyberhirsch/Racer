@@ -252,8 +252,14 @@ private fun Racing(
         // Out at any time, without waiting for the fuel to run dry: a race you
         // have already ruined is not worth sitting through, and there was no
         // way out of one until now.
+        //
+        // Held down from the very top of the screen. In immersive mode the top
+        // strip belongs to the system — that is where a swipe brings the bars
+        // back — and a button sitting in it gets taps taken away from it. On
+        // the emulator MENU, in the corner, did nothing at all while RESTART
+        // beside it worked every time.
         Row(
-            Modifier.align(Alignment.TopEnd),
+            Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             SmallButton("RESTART", onClick = onRestart)
@@ -378,7 +384,7 @@ private fun Countdown(game: Game, modifier: Modifier) {
     val go = n == 0
     Box(
         modifier
-            .padding(top = 34.dp)
+            .padding(top = 82.dp)
             .size(if (go) 62.dp else 44.dp, 44.dp)
             .clip(RoundedCornerShape(22.dp))
             .background(if (go) Red else Color(0xCC0A0C10))
