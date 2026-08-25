@@ -106,7 +106,7 @@ fun Hud(
     onMenu: () -> Unit,
     onRecentre: () -> Unit,
     onInvert: () -> Unit,
-    onPedals: (throttle: Boolean, brake: Boolean) -> Unit
+    onPedals: (throttle: Float, brake: Boolean) -> Unit
 ) {
     // Read the tick here, so it is this composable that Compose marks for
     // recomposition each frame — and pass it down, so the racing HUD cannot be
@@ -241,9 +241,8 @@ private fun Racing(
 
         // The two controls, each with its own gesture and its own corner. A
         // whole-screen-half split meant a thumb resting anywhere counted, and
-        // gave no way to ask for part throttle.
-        // Each control reports only its own change; the activity wants both at
-        // once, so the last value of the other one is kept here.
+        // gave no way to ask for part throttle. Each reports only its own
+        // change, so the last value of the other one is kept here.
         val pedals = remember { Pedals() }
         BrakeButton(Modifier.align(Alignment.BottomStart)) {
             pedals.brake = it; onPedals(pedals.gas, it)
