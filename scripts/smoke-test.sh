@@ -15,6 +15,20 @@ PACKAGE=dev.racer.app
 ACTIVITY="$PACKAGE/.GameActivity"
 OUT=smoke-output
 mkdir -p "$OUT"
+VERDICT="$OUT/verdict.txt"
+rm -f "$VERDICT"
+
+# This script runs under set -e, and a grep that matches nothing is enough to
+# end it. When that happens mid-run there is otherwise no verdict at all and
+# the job says only "No such file or directory", which explains nothing. Leave
+# something behind that does.
+trap 'code=$?; if [ "$code" -ne 0 ] && [ ! -s "$VERDICT" ]; then
+    {
+        echo "SMOKE the run stopped early (exit $code), before it could reach a verdict"
+        echo "SMOKE last of the game log:"
+        adb logcat -d 2>/dev/null | grep -E "Racer  *: " | tail -12 | sed "s/^/SMOKE   /" || true
+    } > "$VERDICT" 2>/dev/null || true
+fi' EXIT
 
 echo "== building and installing =="
 ./gradlew :app:assembleDebug --no-daemon
@@ -175,8 +189,14 @@ echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 
 # The app reports where it put its buttons, which is the one source that has
 # been reliable: read them now, before any of the log clearing below.
-RESTART_RECT=$(adb logcat -d | grep -o "button RESTART rect=[0-9,]*" | tail -1 | cut -d= -f2)
-MENU_RECT=$(adb logcat -d | grep -o "button MENU rect=[0-9,]*" | tail -1 | cut -d= -f2)
+# From the saved race log as well as the live buffer: the tilt check clears
+# logcat, and the buttons report their position once, when the HUD is laid out.
+# A grep that matches nothing must not end the run, hence the fallbacks.
+BUTTON_LOG=$(cat "$OUT/logcat-race.txt" "$OUT/logcat-tilt.txt" 2>/dev/null; adb logcat -d 2>/dev/null || true)
+RESTART_RECT=$(echo "$BUTTON_LOG" | grep -o "button RESTART rect=[0-9,]*" | tail -1 | cut -d= -f2 || true)
+MENU_RECT=$(echo "$BUTTON_LOG" | grep -o "button MENU rect=[0-9,]*" | tail -1 | cut -d= -f2 || true)
+RESTART_RECT=${RESTART_RECT:-}
+MENU_RECT=${MENU_RECT:-}
 echo "the app placed RESTART at [${RESTART_RECT:-unknown}] and MENU at [${MENU_RECT:-unknown}]"
 
 # Press the centre of a rectangle the app reported.
