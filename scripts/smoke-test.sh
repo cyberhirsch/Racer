@@ -34,8 +34,14 @@ tap_text() {
     local label="$1"
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return 1
     local bounds
+    # Skip nodes reported at [0,0][0,0]. Compose publishes some of its
+    # semantics with no bounds at all, and taking the first match regardless
+    # meant tapping the corner of the screen and calling the button broken:
+    # that is what made MENU look dead for three runs, and the gas slider
+    # before it.
     bounds=$(adb shell cat /sdcard/ui.xml | tr '>' '\n' \
-        | grep -F "text=\"$label\"" | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1)
+        | grep -F "text=\"$label\"" | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' \
+        | grep -v 'bounds="\[0,0\]\[0,0\]"' | head -1)
     [ -n "$bounds" ] || return 1
     local nums; nums=$(echo "$bounds" | grep -o '[0-9]*')
     local x1 y1 x2 y2

@@ -253,11 +253,11 @@ private fun Racing(
         // have already ruined is not worth sitting through, and there was no
         // way out of one until now.
         //
-        // Held down from the very top of the screen. In immersive mode the top
-        // strip belongs to the system — that is where a swipe brings the bars
-        // back — and a button sitting in it gets taps taken away from it. On
-        // the emulator MENU, in the corner, did nothing at all while RESTART
-        // beside it worked every time.
+        // Held down from the very top edge, which in immersive mode belongs to
+        // the system: a swipe there brings the bars back. That is a reason to
+        // keep clear of it, but it was not why MENU looked dead on the
+        // emulator — the test was reading a bounds-less semantics node and
+        // tapping the corner of the screen instead of the button.
         Row(
             Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
