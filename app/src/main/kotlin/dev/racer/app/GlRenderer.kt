@@ -48,6 +48,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     private var height = 1
     private var lastFrameNanos = 0L
     private var frameCounter = 0
+    private var lastLoggedRoll = 0.0
 
     /**
      * Called on the GL thread at the start of every frame with the real elapsed
@@ -118,12 +119,14 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         // a roll sign is far too easy to get backwards to keep it here.
         val view = Mat4.lookAtRolled(cam.eye, cam.target, Vec3(0f, 1f, 0f), cam.rollRadians)
 
-        // Once a second, report what the renderer is actually drawing with.
-        // The app can read the right roll from the sensor and still draw a
-        // level frame, and only this tells the two apart.
-        if (++frameCounter % 60 == 0) {
-            android.util.Log.i("Racer", "draw roll=%.1f deg fov=%.0f".format(
-                Math.toDegrees(cam.rollRadians.toDouble()), cam.fovDegrees))
+        // Report what the renderer is actually drawing with, whenever it
+        // changes materially. The app can read the right roll from the sensor
+        // and still draw a level frame; only this tells the two apart, and it
+        // is what the emulator test asserts on.
+        val rollDegrees = Math.toDegrees(cam.rollRadians.toDouble())
+        if (kotlin.math.abs(rollDegrees - lastLoggedRoll) > 3.0 || ++frameCounter % 120 == 0) {
+            lastLoggedRoll = rollDegrees
+            android.util.Log.i("Racer", "draw roll=%.1f deg".format(rollDegrees))
         }
         val viewProjection = projection * view
 
