@@ -115,7 +115,10 @@ if __name__ == '__main__':
     w, h, rgb = downscale(path, target)
     shown = rgb if bits >= 8 else posterize(rgb, bits)
     encoded = base64.b64encode(write_png(None, w, h, shown)).decode()
-    # Emit the whole image on one line. Log viewers and log APIs window by
-    # line count, so wrapping this would push the start of the image out of
-    # view exactly when the picture is worth looking at.
-    print(f"PREVIEW {path} {w}x{h} {encoded}")
+    # Wrapped, not on one line. A single sixty-kilobyte line turned out to
+    # break log retrieval outright — the verdict that followed it could not be
+    # read back at all — whereas a few dozen ordinary lines come through fine.
+    print(f"PREVIEW {path} {w}x{h} {len(encoded)}")
+    for i in range(0, len(encoded), 160):
+        print(f"IMG {encoded[i:i + 160]}")
+    print("PREVIEW END")
