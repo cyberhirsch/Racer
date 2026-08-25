@@ -44,14 +44,13 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 
 adb logcat -c
 
-# The runner has no GPU: every pixel is drawn on the CPU, and at the emulator's
-# native 2340x1080 that is two and a half million of them a frame. This is a
-# test of whether the game works, not of how fast it draws, so give it a
-# quarter of the pixels and let it run at a sane rate. What the renderer
-# manages here says nothing about a real phone; the frame rate it logs is the
-# number to watch for that.
-adb shell wm size 1280x720 || true
-adb shell wm density 320 || true
+# Resizing the display was tried here, to give the software rasteriser a
+# quarter of the pixels to draw. It works — the frame rate tripled — but the
+# screenshots and the accessibility tree then both showed the menu while the
+# game was several seconds into a race and the racing HUD was being laid out
+# six times a second. A display resized underneath the compositor is not worth
+# the frame rate. The emulator keeps its own resolution; the heartbeat runs on
+# the wall clock now, so a slow renderer no longer takes the log with it.
 
 echo "== launching =="
 adb shell am start -W -n "$ACTIVITY"
@@ -411,8 +410,5 @@ print("OK: a real tilt reaches the renderer, and the camera rolls against it.")
 TILT
 
 [ "$FAILED" -eq 0 ] || exit 1
-
-adb shell wm size reset || true
-adb shell wm density reset || true
 
 echo "== smoke test passed =="
