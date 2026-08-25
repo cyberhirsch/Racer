@@ -72,9 +72,9 @@ tap_text() {
     # before it.
     bounds=$(adb shell cat /sdcard/ui.xml | tr '>' '\n' \
         | grep -F "text=\"$label\"" | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' \
-        | grep -v 'bounds="\[0,0\]\[0,0\]"' | head -1)
+        | grep -v 'bounds="\[0,0\]\[0,0\]"' | head -1 || true)
     [ -n "$bounds" ] || return 1
-    local nums; nums=$(echo "$bounds" | grep -o '[0-9]*')
+    local nums; nums=$(echo "$bounds" | grep -o '[0-9]*' || true)
     local x1 y1 x2 y2
     read -r x1 y1 x2 y2 <<< "$(echo "$nums" | tr '\n' ' ')"
     TAP_X=$(( (x1 + x2) / 2 )); TAP_Y=$(( (y1 + y2) / 2 ))
@@ -86,7 +86,7 @@ tap_text() {
 echo "== starting a race =="
 if ! tap_text "START ENGINE"; then
     echo "could not find the START ENGINE button; falling back to the screen centre-right"
-    size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*')
+    size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' || true)
     w=${size%x*}; h=${size#*x}
     # In landscape the reported size may still be portrait; use the larger value
     # as the width.
@@ -100,7 +100,7 @@ fi
 # `input swipe` with identical start and end points does not reliably hold a
 # press; explicit motion events do.
 sleep 6
-size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1)
+size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 || true)
 w=${size%x*}; h=${size#*x}
 if [ "$h" -gt "$w" ]; then t=$w; w=$h; h=$t; fi
 
@@ -108,19 +108,19 @@ if [ "$h" -gt "$w" ]; then t=$w; w=$h; h=$t; fi
 # reports RACING, the HUD is not following the game state.
 adb shell uiautomator dump /sdcard/ui2.xml >/dev/null 2>&1 || true
 UI2=$(adb shell cat /sdcard/ui2.xml 2>/dev/null)
-ON_SCREEN=$(echo "$UI2" | grep -o 'text="[^"]*"' | sed 's/text=//' | sort -u | tr '\n' ' ')
+ON_SCREEN=$(echo "$UI2" | grep -o 'text="[^"]*"' | sed 's/text=//' | sort -u | tr '\n' ' ' || true)
 echo "on screen during the race: $ON_SCREEN"
 
 # Where is the top of the gas slider? The slider carries a content description
 # for this, but Compose reported its node with zero bounds, so the layout is
 # also worked out directly: the capsule is 76x210dp in the bottom-right corner
 # inside 14dp of padding, and dp become pixels through the screen density.
-DENSITY=$(adb shell wm density | grep -o '[0-9]*' | tail -1)
+DENSITY=$(adb shell wm density | grep -o '[0-9]*' | tail -1 || true)
 DENSITY=${DENSITY:-160}
 dp() { echo $(( $1 * DENSITY / 160 )); }
 
 GAS_BOUNDS=$(echo "$UI2" | tr '<' '\n' | grep 'content-desc="GAS SLIDER"' \
-    | grep -o 'bounds="[^"]*"' | head -1 | grep -o '[0-9]\+')
+    | grep -o 'bounds="[^"]*"' | head -1 | grep -o '[0-9]\+' || true)
 read -r GX1 GY1 GX2 GY2 <<< "$(echo "${GAS_BOUNDS:-0 0 0 0}" | tr '\n' ' ')"
 GX1=${GX1:-0}; GY1=${GY1:-0}; GX2=${GX2:-0}; GY2=${GY2:-0}
 if [ "$GX2" -gt 0 ] && [ "$GY2" -gt "$GY1" ]; then
@@ -186,14 +186,14 @@ adb exec-out screencap -p > "$OUT/04-rolled.png"
 # Read the roll the app had at this moment, before the sensor goes back.
 # phoneRoll is how far the phone is turned; the camera roll is the negative of
 # it, which is the whole point of the check below.
-APP_ROLL=$(adb logcat -d | grep -o "phoneRoll=[-0-9.]*" | tail -1 | cut -d= -f2)
+APP_ROLL=$(adb logcat -d | grep -o "phoneRoll=[-0-9.]*" | tail -1 | cut -d= -f2 || true)
 APP_ROLL=${APP_ROLL:-0}
 # The furthest the renderer actually rolled while the phone was tilted. Picked
 # by size rather than by value: the camera rolls the opposite way to the phone,
 # so the interesting frame is the most negative one, and sorting either end
 # would silently pick the wrong frame if the sign ever flipped again.
 DRAW_ROLL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 \
-    | python3 -c "import sys; v=[float(x) for x in sys.stdin if x.strip()]; print(max(v, key=abs) if v else 0)")
+    | python3 -c "import sys; v=[float(x) for x in sys.stdin if x.strip()]; print(max(v, key=abs) if v else 0)" || true)
 DRAW_ROLL=${DRAW_ROLL:-0}
 echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg"
 
@@ -201,7 +201,7 @@ echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg
 adb emu sensor set acceleration 0:9.81:0 || true
 sleep 4
 adb exec-out screencap -p > "$OUT/05-level.png"
-DRAW_ROLL_LEVEL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 | tail -1)
+DRAW_ROLL_LEVEL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 | tail -1 || true)
 DRAW_ROLL_LEVEL=${DRAW_ROLL_LEVEL:-99}
 echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 
@@ -257,7 +257,7 @@ adb logcat -c
 # tree actually says about each, into the verdict, rather than guessing again.
 adb shell uiautomator dump /sdcard/ui4.xml >/dev/null 2>&1 || true
 BUTTON_NODES=$(adb shell cat /sdcard/ui4.xml 2>/dev/null | tr '<' '\n' \
-    | grep -E 'text="(MENU|RESTART)"' | sed 's/^/    /' | head -6)
+    | grep -E 'text="(MENU|RESTART)"' | sed 's/^/    /' | head -6 || true)
 [ -n "$BUTTON_NODES" ] || BUTTON_NODES="    neither button is in the tree at all"
 
 MENU_WHERE="the app never reported where it is"
@@ -282,7 +282,7 @@ VERDICT="$OUT/verdict.txt"
 HORIZON_ROLLED=$(python3 scripts/horizon.py "$OUT/04-rolled.png" 2>&1 | tail -1 || true)
 HORIZON_LEVEL=$(python3 scripts/horizon.py "$OUT/05-level.png" 2>&1 | tail -1 || true)
 
-TOP=$(grep -o "speed=[0-9]*kmh" "$OUT/logcat.txt" | grep -o "[0-9]*" | sort -n | tail -1)
+TOP=$(grep -o "speed=[0-9]*kmh" "$OUT/logcat.txt" | grep -o "[0-9]*" | sort -n | tail -1 || true)
 TOP=${TOP:-0}
 REACHED_RACING=no
 grep -q "state -> RACING" "$OUT/logcat.txt" && REACHED_RACING=yes
@@ -340,7 +340,7 @@ FAILED=0
 [ "$TOP" -lt 30 ] && { echo "FAIL: the car never got moving (peak ${TOP} km/h)."; FAILED=1; }
 # The slider is analogue: pressing near its top must ask for most of the
 # throttle, not merely something above zero.
-PEAK_THROTTLE=$(grep -o "throttle=[0-9.]*" "$OUT/logcat.txt" | cut -d= -f2 | sort -g | tail -1)
+PEAK_THROTTLE=$(grep -o "throttle=[0-9.]*" "$OUT/logcat.txt" | cut -d= -f2 | sort -g | tail -1 || true)
 PEAK_THROTTLE=${PEAK_THROTTLE:-0}
 echo "peak throttle asked for: $PEAK_THROTTLE"
 awk -v t="$PEAK_THROTTLE" 'BEGIN { exit (t >= 0.6 ? 0 : 1) }' || {
