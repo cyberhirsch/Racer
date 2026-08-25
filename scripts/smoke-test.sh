@@ -196,6 +196,14 @@ fi
 sleep 6
 adb logcat -d >> "$OUT/logcat-tilt.txt"
 adb logcat -c
+# Both buttons are the same kind of node, side by side in the same row, yet
+# RESTART reports real bounds and MENU only a bounds-less one. Print what the
+# tree actually says about each, into the verdict, rather than guessing again.
+adb shell uiautomator dump /sdcard/ui4.xml >/dev/null 2>&1 || true
+BUTTON_NODES=$(adb shell cat /sdcard/ui4.xml 2>/dev/null | tr '<' '\n' \
+    | grep -E 'text="(MENU|RESTART)"' | sed 's/^/    /' | head -6)
+[ -n "$BUTTON_NODES" ] || BUTTON_NODES="    neither button is in the tree at all"
+
 MENU_WHERE="not found in the tree"
 if tap_text "MENU"; then
     MENU_WHERE="pressed at ${TAP_X},${TAP_Y} of ${w}x${h}, bounds ${TAP_BOUNDS}"
@@ -247,6 +255,8 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
     echo "SMOKE   upright: $HORIZON_LEVEL"
     echo "SMOKE buttons: restart=$RESTART_WORKED menu=$MENU_WORKED ($MENU_WHERE)"
+    echo "SMOKE what the tree says about the two buttons:"
+    echo "$BUTTON_NODES" | cut -c1-400 | sed 's/^/SMOKE /'
     echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
 } >> "$VERDICT"
 
