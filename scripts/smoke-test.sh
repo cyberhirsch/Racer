@@ -93,12 +93,23 @@ if ! tap_text "START ENGINE"; then
     adb shell input tap $(( w * 3 / 4 )) $(( h * 4 / 5 ))
 fi
 
-# Countdown, then hold the throttle. The gas is a capsule slider on the right:
-# how far up it is pressed is how much throttle is asked for, so the press has
-# to land near its top, not just anywhere on that side of the screen.
-# `input swipe` with identical start and end points does not reliably hold a
-# press; explicit motion events do.
-sleep 6
+# Wait for the race, rather than assuming how long the countdown takes.
+#
+# The runner has no GPU and draws every pixel on the CPU, at about two frames a
+# second. Game time advances by at most a twentieth of a second per frame, so
+# the four-second countdown takes over half a minute there. Sleeping a fixed
+# six seconds meant the throttle was pressed while the lights were still on,
+# and the car never moved — which read as a broken control rather than a slow
+# emulator.
+echo "waiting for the race to start"
+for _ in $(seq 60); do
+    adb logcat -d | grep -q "state -> RACING" && break
+    sleep 1
+done
+adb logcat -d | grep -q "state -> RACING" \
+    && echo "the race is under way" \
+    || echo "the race never started; carrying on so the run still reports"
+
 size=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 || true)
 w=${size%x*}; h=${size#*x}
 if [ "$h" -gt "$w" ]; then t=$w; w=$h; h=$t; fi
@@ -134,9 +145,10 @@ else
 fi
 
 adb shell input motionevent DOWN "$TX" "$TY" || adb shell input tap "$TX" "$TY"
-sleep 5
+# Long enough for a car to get going even at two frames a second.
+sleep 12
 adb exec-out screencap -p > "$OUT/02-racing.png"
-sleep 4
+sleep 10
 adb exec-out screencap -p > "$OUT/03-racing-later.png"
 
 # Is the HUD actually following the game, or drawing a stale frame? The HUD
