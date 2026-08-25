@@ -180,11 +180,22 @@ if tap_text "RESTART"; then
     sleep 3
     adb logcat -d | grep -q "state -> COUNTDOWN" && RESTART_WORKED=yes
 fi
+
+# Let the restarted countdown finish first. Pressing MENU during it was tried
+# and did nothing — which is worth knowing, but it makes for a test that
+# reports the wrong thing, so the press happens while the race is properly
+# under way.
+sleep 6
 adb logcat -d >> "$OUT/logcat-tilt.txt"
 adb logcat -c
 if tap_text "MENU"; then
     sleep 3
     adb logcat -d | grep -q "state -> MENU" && MENU_WORKED=yes
+fi
+if [ "$MENU_WORKED" = no ]; then
+    echo "the MENU press did nothing; this is what the button looks like to the tree:"
+    adb shell uiautomator dump /sdcard/ui4.xml >/dev/null 2>&1 || true
+    adb shell cat /sdcard/ui4.xml 2>/dev/null | tr '<' '\n' | grep 'text="MENU"' || echo "  no MENU node at all"
 fi
 echo "restart button: $RESTART_WORKED; menu button: $MENU_WORKED"
 
