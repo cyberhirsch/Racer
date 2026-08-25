@@ -66,10 +66,16 @@ class TiltSteering(
         // Android's gravity vector points *away* from the ground: held upright
         // in its natural orientation a phone reads about (0, +9.81, 0). So in
         // the screen frame it points "up the screen", and the angle between it
-        // and screen-up is the wheel angle. The negation on sx makes a
-        // clockwise turn of the phone steer right. Verified end to end by
-        // TiltSteeringTest.
-        rawRoll = atan2(-sx, sy)
+        // and screen-up is the wheel angle.
+        //
+        // Rolling the phone clockwise (as the player sees it) moves gravity to
+        // (+sin, +cos) in screen coordinates, so this reads positive — and
+        // positive steer turns the car right, which is what a wheel turned
+        // clockwise should do. The sign here was originally the other way
+        // round; the unit test could not catch it, because it checked the code
+        // against the same assumption the code was built on. See
+        // TiltSteeringTest and scripts/smoke-test.sh.
+        rawRoll = atan2(sx, sy)
     }
 
     /** Zero the steering at the phone's current attitude. */
@@ -105,4 +111,14 @@ class TiltSteering(
 
     /** Current steering angle relative to neutral, for the HUD needle. */
     val rollFromNeutral: Double get() = wrapPi(rawRoll - neutral)
+
+    /**
+     * How far to roll the camera so the horizon stays level.
+     *
+     * The screen is physically rotated by the player, so the rendered image is
+     * rotated with it; the view has to turn back by the same amount. Not
+     * affected by [invert], which is a steering preference — the horizon is
+     * not a matter of taste.
+     */
+    val viewRoll: Double get() = rollFromNeutral
 }

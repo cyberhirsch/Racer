@@ -109,6 +109,8 @@ class GameActivity : ComponentActivity() {
         brake = (brake + if (brakeDown) rate * 2 else -rate * 2.5).coerceIn(0.0, 1.0)
 
         val steer = steering.update(dt)
+        // Cancel the phone's rotation in the view so the horizon stays level.
+        game.viewRoll = steering.viewRoll
         val wasRacing = game.state == Game.State.RACING
         game.update(dt, Input(throttle, brake, steer))
 
@@ -140,7 +142,8 @@ class GameActivity : ComponentActivity() {
                     "racing speed=${game.speedKmh}kmh gear=${game.gearLabel} " +
                         "fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
                         "cp=${game.nextCheckpoint}/${game.checkpointTotal} " +
-                        "throttle=${"%.2f".format(throttle)} steer=${"%.2f".format(steering.steer)}"
+                        "throttle=${"%.2f".format(throttle)} steer=${"%.2f".format(steering.steer)} " +
+                        "viewRoll=${"%.1f".format(Math.toDegrees(steering.viewRoll))}"
                 )
             }
         }

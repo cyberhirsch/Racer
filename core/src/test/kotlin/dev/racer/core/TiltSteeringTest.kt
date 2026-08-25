@@ -20,18 +20,27 @@ class TiltSteeringTest {
 
     /**
      * Gravity as Android reports it, in device coordinates, for a phone held
-     * upright facing the player and rotated by `roll` about the screen normal.
+     * upright facing the player and rolled **clockwise** (from the player's
+     * point of view) by `roll`.
      *
-     * Android's gravity vector points away from the ground: a phone held
-     * upright in its natural orientation reads roughly (0, +9.81, 0).
+     * The one physical convention this whole file rests on, stated once so it
+     * can be checked by eye:
+     *
+     *   Android's gravity vector points *away* from the ground, so a phone held
+     *   upright in its natural orientation reads about (0, +9.81, 0). Roll it
+     *   clockwise by t and that vector moves to (+9.81 sin t, +9.81 cos t) in
+     *   device axes — the vector appears to swing to the right of the screen,
+     *   because the screen has turned left underneath it.
+     *
+     * Getting this backwards is exactly the bug that shipped: the steering came
+     * out mirrored, and the test agreed with it, because the test asserted the
+     * code against the same assumption. Pitching about the device x-axis tips
+     * gravity out of the screen plane, scaling the in-plane part without
+     * turning it.
      */
     private fun gravityFor(roll: Double, pitch: Double = 0.0): Pair<Double, Double> {
-        // Upright and unrolled, gravity is +y in device axes. Rolling the phone
-        // about the screen normal rotates that vector within the screen plane;
-        // pitching about the device x-axis tips it out of the plane, which
-        // scales the in-plane part without turning it.
         val inPlane = cos(pitch)
-        return Pair(-sin(roll) * 9.81 * inPlane, cos(roll) * 9.81 * inPlane)
+        return Pair(sin(roll) * 9.81 * inPlane, cos(roll) * 9.81 * inPlane)
     }
 
     private fun recovered(roll: Double, displayRotation: Int, pitch: Double = 0.0): Double {
@@ -99,6 +108,46 @@ class TiltSteeringTest {
         t.onGravity(bx, by, 0)
         repeat(400) { t.update(1.0 / 60.0) }
         assertEquals("did not reach full lock", 1.0, t.steer, 1e-3)
+    }
+
+    /**
+     * A wheel turned clockwise steers right. This is the assertion that was
+     * wrong on the device, so it is stated in plain terms rather than left
+     * implicit in a round-trip.
+     */
+    @Test
+    fun `rolling the phone clockwise steers right`() {
+        val t = TiltSteering()
+        val (nx, ny) = gravityFor(0.0)
+        t.onGravity(nx, ny, 0); t.calibrate()
+
+        val (cx, cy) = gravityFor(0.35)          // 20 degrees clockwise
+        t.onGravity(cx, cy, 0)
+        repeat(400) { t.update(1.0 / 60.0) }
+        println("clockwise 20 deg -> steer %+.3f".format(t.steer))
+        assertTrue("clockwise should steer right, got ${t.steer}", t.steer > 0.1)
+
+        val (ax, ay) = gravityFor(-0.35)         // 20 degrees anticlockwise
+        t.onGravity(ax, ay, 0)
+        repeat(400) { t.update(1.0 / 60.0) }
+        println("anticlockwise 20 deg -> steer %+.3f".format(t.steer))
+        assertTrue("anticlockwise should steer left, got ${t.steer}", t.steer < -0.1)
+    }
+
+    /** The horizon is not a preference: inverting the steering must not flip it. */
+    @Test
+    fun `the view roll follows the phone and ignores the invert setting`() {
+        val t = TiltSteering()
+        val (nx, ny) = gravityFor(0.0)
+        t.onGravity(nx, ny, 0); t.calibrate()
+
+        val (gx, gy) = gravityFor(0.4)
+        t.onGravity(gx, gy, 0)
+        assertEquals(0.4, t.viewRoll, 1e-9)
+
+        t.invert = true
+        assertEquals("inverting the steering must not roll the horizon the other way",
+            0.4, t.viewRoll, 1e-9)
     }
 
     @Test

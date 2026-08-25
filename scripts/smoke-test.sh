@@ -78,12 +78,46 @@ sleep 4
 adb exec-out screencap -p > "$OUT/03-racing-later.png"
 adb shell input motionevent UP "$TX" "$TY" || true
 
+# --- horizon check -----------------------------------------------------------
+# Roll the phone and confirm the drawn horizon rolls back the other way. This
+# is the only way to check the sign: it means nothing until it is on screen.
+#
+# The emulator's accelerometer can be driven directly, so a known tilt can be
+# injected and the resulting frame measured.
+echo "== checking the horizon stays level =="
+ROLL_DEG=25
+python3 - "$ROLL_DEG" > /tmp/gravity.txt <<'GRAV'
+import math, sys
+# Clockwise roll, per the convention stated in TiltSteering: gravity swings to
+# the right of the screen as the screen turns left underneath it.
+t = math.radians(float(sys.argv[1]))
+print(f"{9.81 * math.sin(t):.3f}:{9.81 * math.cos(t):.3f}:0")
+GRAV
+GRAVITY=$(cat /tmp/gravity.txt)
+echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
+
+adb emu sensor set acceleration "$GRAVITY" || echo "could not drive the emulator's sensor"
+sleep 3
+adb exec-out screencap -p > "$OUT/04-rolled.png"
+
+# Back to upright, so the last frame is a level reference.
+adb emu sensor set acceleration 0:9.81:0 || true
+sleep 3
+adb exec-out screencap -p > "$OUT/05-level.png"
+
+
 adb logcat -d > "$OUT/logcat.txt"
 
 # Gather the evidence first and write it to a file. Checks come afterwards, so
 # a failing run still explains itself and still produces the previews.
 VERDICT="$OUT/verdict.txt"
 : > "$VERDICT"
+
+# What the app thought the phone was doing when the rolled frame was taken.
+APP_ROLL=$(grep -o "viewRoll=[-0-9.]*" "$OUT/logcat.txt" | tail -2 | head -1 | cut -d= -f2)
+APP_ROLL=${APP_ROLL:-0}
+HORIZON_ROLLED=$(python3 scripts/horizon.py "$OUT/04-rolled.png" 2>&1 | tail -1)
+HORIZON_LEVEL=$(python3 scripts/horizon.py "$OUT/05-level.png" 2>&1 | tail -1)
 
 TOP=$(grep -o "speed=[0-9]*kmh" "$OUT/logcat.txt" | grep -o "[0-9]*" | sort -n | tail -1)
 TOP=${TOP:-0}
@@ -104,6 +138,8 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
         grep -A 12 -E "FATAL EXCEPTION" "$OUT/logcat.txt" | tail -14 | sed 's/^/SMOKE   /' || true
     fi
     echo "SMOKE on screen during the race: $ON_SCREEN"
+    echo "SMOKE horizon, phone rolled ${ROLL_DEG} deg (app saw ${APP_ROLL}): $HORIZON_ROLLED"
+    echo "SMOKE horizon, phone upright: $HORIZON_LEVEL"
     echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
 } >> "$VERDICT"
 
@@ -122,6 +158,38 @@ FAILED=0
 [ "$REACHED_RACING" = no ] && { echo "FAIL: the game never reached RACING - the menu did not respond."; FAILED=1; }
 [ "$TOP" -lt 30 ] && { echo "FAIL: the car never got moving (peak ${TOP} km/h)."; FAILED=1; }
 [ "$FOREGROUND" = no ] && { echo "FAIL: the app is no longer in the foreground."; FAILED=1; }
+
+# The drawn horizon must lean the opposite way to the phone, and by about the
+# same amount, or it is not staying level for the person holding it.
+python3 - "$ROLL_DEG" "$HORIZON_ROLLED" "$HORIZON_LEVEL" <<'HORIZON' || FAILED=1
+import re, sys
+
+roll = float(sys.argv[1])
+
+def angle(text):
+    m = re.search(r"HORIZON\s+([-+0-9.]+)", text)
+    return float(m.group(1)) if m else None
+
+rolled, level = angle(sys.argv[2]), angle(sys.argv[3])
+if rolled is None or level is None:
+    print(f"FAIL: could not measure the horizon ({sys.argv[2]!r} / {sys.argv[3]!r})")
+    sys.exit(1)
+
+print(f"horizon: upright {level:+.1f} deg, phone rolled {roll:.0f} deg -> {rolled:+.1f} deg")
+
+if abs(level) > 6:
+    print(f"FAIL: the horizon is not level with the phone upright ({level:+.1f} deg)")
+    sys.exit(1)
+
+# Compensating means leaning the other way: a clockwise roll of the phone must
+# tilt the drawn horizon anticlockwise.
+if rolled > -roll * 0.4:
+    print(f"FAIL: the horizon did not roll back to stay level "
+          f"(expected about {-roll:.0f} deg, measured {rolled:+.1f} deg)")
+    sys.exit(1)
+
+print("OK: the horizon compensates for the phone's roll.")
+HORIZON
 
 python3 - "$OUT/02-racing.png" <<'CHECK' || FAILED=1
 import sys

@@ -201,7 +201,25 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
     /* ------------------------------------------------------------- camera */
 
-    class Camera(val eye: Vec3, val target: Vec3, val fovDegrees: Float)
+    class Camera(
+        val eye: Vec3,
+        val target: Vec3,
+        val fovDegrees: Float,
+        /** Camera roll about the view axis, radians. See [viewRoll]. */
+        val rollRadians: Float
+    )
+
+    /**
+     * How far the phone is currently rolled away from its calibrated neutral,
+     * in radians. The camera rolls to cancel it.
+     *
+     * This is what actually keeps the horizon level. The rendered image is
+     * fixed to the screen, and the player physically rotates the screen to
+     * steer — so an image that is level within its own frame appears tilted by
+     * exactly the amount the phone is tilted. Cancelling that rotation in the
+     * view is the only way the horizon stays level to the person holding it.
+     */
+    var viewRoll: Double = 0.0
 
     private var camX = 0.0
     private var camY = 0.0
@@ -211,9 +229,8 @@ class Game(private val storage: Storage = Storage.InMemory()) {
     /**
      * Chase camera.
      *
-     * The up vector is always world up and is never rolled, so however far the
-     * player rotates the phone to steer, the horizon on screen stays level.
-     * Only the car turns.
+     * Rolls by [viewRoll] to keep the horizon level in the player's eyes while
+     * they rotate the phone to steer.
      */
     fun camera(dt: Double, aspect: Float): Camera {
         val v = vehicle
@@ -244,10 +261,15 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         val baseFov = (52f - (aspect - 1.6f) * 6f).coerceIn(40f, 56f)
         val fov = baseFov + (v.speed * 0.11).coerceIn(0.0, 8.0).toFloat()
 
+        // Clamp so a wild flick, or a phone turned right over, cannot put the
+        // world upside down.
+        val roll = viewRoll.coerceIn(-MAX_VIEW_ROLL, MAX_VIEW_ROLL)
+
         return Camera(
             Vec3(camX, camY, camZ),
             Vec3(v.x + sin(v.yaw) * lead, 0.9, v.z + cos(v.yaw) * lead),
-            fov
+            fov,
+            roll.toFloat()
         )
     }
 
@@ -269,6 +291,9 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         private const val MAX_STEPS = 8
         private const val MAX_FRAME_DELTA = 0.05
         private const val CHECKPOINT_RADIUS = 12
+
+        /** Radians (75 degrees) beyond which the view stops following the phone. */
+        private const val MAX_VIEW_ROLL = 1.31
 
         fun formatTime(seconds: Double): String {
             val m = (seconds / 60).toInt()

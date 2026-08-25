@@ -111,9 +111,15 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         val aspect = width.toFloat() / height
         val cam = game.camera(frameDelta, aspect)
         val projection = Mat4.perspective(cam.fovDegrees * PI.toFloat() / 180f, aspect, 0.4f, 1200f)
-        // Up is always world up: the horizon never rolls, however far the
-        // player has rotated the phone to steer.
-        val view = Mat4.lookAt(cam.eye, cam.target, Vec3(0f, 1f, 0f))
+        // Roll the camera to cancel the phone's rotation, so the horizon stays
+        // level for the person holding it. Rotate the up vector about the view
+        // axis: the image turns the opposite way to the camera, which is
+        // exactly the compensation wanted.
+        val forward = (cam.target - cam.eye).normalized()
+        val right = forward.cross(Vec3(0f, 1f, 0f)).normalized()
+        val up = right.cross(forward).normalized()
+        val rolled = up * kotlin.math.cos(cam.rollRadians) + right * kotlin.math.sin(cam.rollRadians)
+        val view = Mat4.lookAt(cam.eye, cam.target, rolled)
         val viewProjection = projection * view
 
         GLES30.glUseProgram(program)
