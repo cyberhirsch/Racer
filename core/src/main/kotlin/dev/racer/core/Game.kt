@@ -1,5 +1,6 @@
 package dev.racer.core
 
+import kotlin.math.atan2
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
@@ -252,7 +253,32 @@ class Game(private val storage: Storage = Storage.InMemory()) {
     private var camX = 0.0
     private var camY = 0.0
     private var camZ = 0.0
+    private var camYaw = 0.0
     private var camInitialised = false
+
+    /**
+     * The direction the car is actually travelling, as an angle in the
+     * renderer's convention.
+     *
+     * Not the same as which way it is pointing. A car sliding through a corner
+     * is going somewhere its nose is not, and a camera bolted to the nose
+     * looks off into the scenery at exactly the moment the driver most needs
+     * to see where the car is heading.
+     *
+     * Below walking pace the direction of travel is noise — a car barely
+     * rolling has a course made mostly of tyre scrub — so the nose is used
+     * instead. Reversing keeps the nose too: swinging the view round to look
+     * backwards would be worse than useless.
+     */
+    private fun travelDirection(): Double {
+        val v = vehicle
+        if (v.vx < 1.0) return v.yaw
+        val s = sin(v.yaw); val c = cos(v.yaw)
+        val worldX = v.vx * s + v.vy * c
+        val worldZ = v.vx * c - v.vy * s
+        if (abs(worldX) < 1e-6 && abs(worldZ) < 1e-6) return v.yaw
+        return atan2(worldX, worldZ)
+    }
 
     /**
      * Chase camera.
@@ -267,9 +293,20 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         // from the field-of-view creep below instead.
         val back = 7.2 + (v.speed * 0.022).coerceIn(0.0, 1.8)
         val height = 2.45 + (v.speed * 0.008).coerceIn(0.0, 0.65)
-        val wantX = v.x - sin(v.yaw) * back
+
+        // The camera sits behind, and looks along, the direction of travel —
+        // eased into rather than snapped to, so a flick of oversteer does not
+        // throw the whole view sideways.
+        val course = travelDirection()
+        if (!camInitialised) {
+            camYaw = course
+        } else {
+            camYaw += wrapPi(course - camYaw) * (1.0 - exp(-CAM_YAW_RATE * dt))
+        }
+
+        val wantX = v.x - sin(camYaw) * back
         val wantY = height
-        val wantZ = v.z - cos(v.yaw) * back
+        val wantZ = v.z - cos(camYaw) * back
 
         if (!camInitialised) {
             camX = wantX; camY = wantY; camZ = wantZ; camInitialised = true
@@ -295,13 +332,16 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         return Camera(
             Vec3(camX, camY, camZ),
-            Vec3(v.x + sin(v.yaw) * lead, 0.9, v.z + cos(v.yaw) * lead),
+            Vec3(v.x + sin(camYaw) * lead, 0.9, v.z + cos(camYaw) * lead),
             fov,
             roll.toFloat()
         )
     }
 
     fun resetCamera() { camInitialised = false }
+
+    /** Shortest way round from one angle to another. */
+    private fun wrapPi(a: Double) = atan2(sin(a), cos(a))
 
     /* ---------------------------------------------------------------- hud */
 
@@ -322,6 +362,9 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         /** Radians (75 degrees) beyond which the view stops following the phone. */
         private const val MAX_VIEW_ROLL = 1.31
+
+        /** How quickly the view swings round to the direction of travel. */
+        private const val CAM_YAW_RATE = 4.0
 
         fun formatTime(seconds: Double): String {
             val m = (seconds / 60).toInt()
