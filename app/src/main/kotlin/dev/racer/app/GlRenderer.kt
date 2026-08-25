@@ -36,6 +36,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     private var uCameraPos = 0
     private var uFogColor = 0
     private var uFogRange = 0
+    private var uUnlit = 0
     private var uAlpha = 0
     private var uTint = 0
 
@@ -86,6 +87,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         uCameraPos = GLES30.glGetUniformLocation(program, "uCameraPos")
         uFogColor = GLES30.glGetUniformLocation(program, "uFogColor")
         uFogRange = GLES30.glGetUniformLocation(program, "uFogRange")
+        uUnlit = GLES30.glGetUniformLocation(program, "uUnlit")
         uAlpha = GLES30.glGetUniformLocation(program, "uAlpha")
         uTint = GLES30.glGetUniformLocation(program, "uTint")
 
