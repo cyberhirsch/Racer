@@ -70,9 +70,6 @@ class GameActivity : ComponentActivity() {
     private var lastLoggedState: Game.State? = null
     private var lastHeartbeat = 0L
 
-    /** Decaying blip that revs the engine on each beat of the countdown. */
-    private var revBlip = 0.0
-    private var lastCount: Int? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,7 +96,7 @@ class GameActivity : ComponentActivity() {
                     tick = uiTick,
                     steering = steering,
                     tiltAvailable = tiltSensor.available,
-                    onStart = { level -> beginRace { game.loadLevel(level); game.startCountdown() } },
+                    onStart = { level -> beginRace { game.loadLevel(level); game.start() } },
                     onRetry = { beginRace { game.retry() } },
                     onNext = { beginRace { game.nextLevel() } },
                     onMenu = { game.toMenu() },
@@ -152,7 +149,7 @@ class GameActivity : ComponentActivity() {
         val wasRacing = game.state == Game.State.RACING
         game.update(dt, Input(throttle, brake, steer))
 
-        updateEngineSound(dt)
+        updateEngineSound()
 
         if (wasRacing && game.state == Game.State.FINISHED) vibrate(120)
 
@@ -174,7 +171,7 @@ class GameActivity : ComponentActivity() {
             // three attempts at driving the HUD from the frame clock all left
             // it drawing the numbers it started the race with. Announcing the
             // write here is what actually makes the display follow the game.
-            // Remove this line and the HUD freezes and the countdown stops
+            // Remove this line and the HUD freezes and the lap timer stops
             // counting, with nothing else to show for it.
             androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
             if (uiTick.intValue % 20 == 0) {
@@ -186,32 +183,15 @@ class GameActivity : ComponentActivity() {
     /**
      * Feed the engine synth.
      *
-     * While racing it simply follows the crank. On the grid there is nothing
-     * for it to follow — the car is stationary and the physics is not running
-     * — so each beat of the countdown throws a blip of throttle at it, which
-     * decays like a real one: the driver sits there revving it while the
-     * lights come down.
+     * The car is live from the first frame now, so there is nothing special to
+     * do: the synth simply follows the crank whenever a race is running.
      */
-    private fun updateEngineSound(dt: Double) {
-        val counting = game.state == Game.State.COUNTDOWN
-        if (counting) {
-            val count = game.countdownLabel
-            if (count != null && count != lastCount) {
-                lastCount = count
-                // The last beat is 'go': hold the revs rather than let them drop.
-                revBlip = if (count == 0) 1.0 else 0.85
-            }
-            revBlip = (revBlip - dt * 1.6).coerceAtLeast(0.0)
-            engine.rpm = Spec.IDLE_RPM + (Spec.REDLINE - Spec.IDLE_RPM) * 0.72 * revBlip
-            engine.throttle = revBlip
-        } else {
-            lastCount = null
-            revBlip = 0.0
-            engine.rpm = game.vehicle.rpm
-            engine.throttle = throttle
-        }
-        engine.running = counting || game.state == Game.State.RACING
+    private fun updateEngineSound() {
+        engine.rpm = game.vehicle.rpm
+        engine.throttle = throttle
+        engine.running = game.state == Game.State.RACING
     }
+
 
     /**
      * Log state changes and a periodic heartbeat.
@@ -236,7 +216,7 @@ class GameActivity : ComponentActivity() {
         lastHeartbeat = now
 
         // Where the phone is, in every state. This used to be logged only
-        // while racing, so anything reading it during a countdown got the last
+        // while racing, so anything reading it between races got the last
         // value from some earlier race — which is stale by any amount at all,
         // and sent three rounds of tilt debugging chasing numbers that were
         // not describing the moment they were being compared against.

@@ -157,6 +157,15 @@ class Track(val cfg: LevelConfig) {
     /** Checkpoint frame indices; the last one is the finish line. */
     val checkpoints: List<Int>
 
+    /**
+     * Trees and rocks, and the same list bucketed by the frame each stands
+     * nearest. Bucketed because the car only ever needs the handful near where
+     * it is: scanning every obstacle, 120 times a second, is work repeated for
+     * an answer that cannot change.
+     */
+    val obstacles: List<Obstacle>
+    private val obstaclesByFrame: Map<Int, List<Obstacle>>
+
     init {
         val fit = fitCircuit(cfg, runoff)
         frames = fit.frames
@@ -168,6 +177,48 @@ class Track(val cfg: LevelConfig) {
         checkpoints = (1..count).map {
             min(frames.size - 1, ((it.toDouble() / count) * (frames.size - 1)).roundToInt())
         }
+
+        obstacles = growScenery()
+        obstaclesByFrame = obstacles.groupBy { locate(it.x, it.z, 0).index }
+    }
+
+    /**
+     * Scatter trees and rocks over the grass.
+     *
+     * From the level's own seed, so a circuit looks the same every time it is
+     * played. Two things are checked for each candidate: that it stands clear
+     * of the tarmac and run-off where it is placed, and — separately — that it
+     * is clear of every other part of the circuit, because a track that doubles
+     * back can put "well off to the left here" right in the middle of the road
+     * a few hundred metres later.
+     */
+    private fun growScenery(): List<Obstacle> {
+        val rng = Mulberry32(cfg.seed * 31 + 17)
+        val out = ArrayList<Obstacle>()
+        val nearest = runoff + SCENERY_CLEARANCE
+        val furthest = runoff + GRASS_APRON - 12.0
+
+        var i = 0
+        while (i < frames.size - 1) {
+            i += 3 + (rng.next() * 6).toInt()
+            if (i >= frames.size - 1) break
+            val f = frames[i % frames.size]
+            for (side in listOf(-1.0, 1.0)) {
+                if (rng.next() > 0.55) continue
+                val out_ = nearest + rng.next() * (furthest - nearest)
+                val along = (rng.next() - 0.5) * 6.0
+                val x = f.pos.x + f.right.x * out_ * side + f.tangent.x * along
+                val z = f.pos.z + f.right.z * out_ * side + f.tangent.z * along
+
+                // Clear of the circuit everywhere, not just here.
+                if (abs(locate(x, z, i).lateral) < nearest) continue
+
+                val tree = rng.next() < 0.62
+                val radius = if (tree) 0.7 + rng.next() * 0.5 else 0.9 + rng.next() * 1.3
+                out += Obstacle(x, z, radius, tree)
+            }
+        }
+        return out
     }
 
     /** Yaw (renderer convention) pointing along the track at a frame. */
@@ -205,6 +256,15 @@ class Track(val cfg: LevelConfig) {
      * @param beyond how far past [deepGrass] the car is, in metres; 0 anywhere
      *   it can still drive normally.
      */
+    /**
+     * Something solid standing on the grass.
+     *
+     * Kept well clear of the tarmac and of the run-off: the point is that
+     * leaving the circuit is allowed and has a cost, not that a stray kerb
+     * ends the race. You have to be properly lost to reach one.
+     */
+    class Obstacle(val x: Double, val z: Double, val radius: Double, val tree: Boolean)
+
     class Surface(
         val loc: Location,
         val grip: Double,
@@ -232,6 +292,21 @@ class Track(val cfg: LevelConfig) {
         return Surface(loc, grip, offTrack, max(0.0, off - deepGrass))
     }
 
+    /** Anything solid the car is touching at this position, or null. */
+    fun obstacleNear(x: Double, z: Double, hint: Int, reach: Double): Obstacle? {
+        for (o in -SCENERY_SPAN..SCENERY_SPAN) {
+            val bucket = obstaclesByFrame[(((hint + o) % frames.size) + frames.size) % frames.size]
+                ?: continue
+            for (obstacle in bucket) {
+                val dx = x - obstacle.x
+                val dz = z - obstacle.z
+                val touch = obstacle.radius + reach
+                if (dx * dx + dz * dz < touch * touch) return obstacle
+            }
+        }
+        return null
+    }
+
     /** Signed lateral offset of the finish line, for the finish gate mesh. */
     fun frameAt(index: Int): Frame = frames[index]
 
@@ -243,6 +318,12 @@ class Track(val cfg: LevelConfig) {
 
         /** How far the grass reaches beyond the gravel, in metres. */
         const val GRASS_APRON = 90.0
+
+        /** How far past the run-off the nearest tree or rock may stand. */
+        private const val SCENERY_CLEARANCE = 6.0
+
+        /** Frames either side of the car to check for scenery. */
+        private const val SCENERY_SPAN = 6
         private const val SEARCH_SPAN = 40
         private const val FRAME_SPACING = 3.0
 

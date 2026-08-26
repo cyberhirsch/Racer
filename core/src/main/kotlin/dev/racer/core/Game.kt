@@ -1,6 +1,7 @@
 package dev.racer.core
 
 import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
@@ -29,7 +30,7 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         }
     }
 
-    enum class State { MENU, COUNTDOWN, RACING, FINISHED, FAILED }
+    enum class State { MENU, RACING, FINISHED, FAILED }
 
     var state = State.MENU
         private set
@@ -40,8 +41,6 @@ class Game(private val storage: Storage = Storage.InMemory()) {
     val vehicle = Vehicle()
 
     var raceTime = 0.0
-        private set
-    var countdown = 0.0
         private set
     var nextCheckpoint = 0
         private set
@@ -88,15 +87,43 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         beyondDeepGrass = false
     }
 
-    fun startCountdown(seconds: Double = 3.999) {
+    /**
+     * Go racing. There is nothing to wait for.
+     *
+     * There used to be a four-second countdown holding the car still. It was
+     * never right on a real device and it was time the player spent watching
+     * rather than driving. The start lights still run — see [startLightsLit] —
+     * but they are scenery: the car is live from the first frame.
+     */
+    fun start() {
         if (track == null) loadLevel(levelIndex)
-        countdown = seconds
-        state = State.COUNTDOWN
+        sinceStart = 0.0
+        state = State.RACING
     }
 
-    /** Whole number to show during the countdown, or null once racing. */
-    val countdownLabel: Int?
-        get() = if (state == State.COUNTDOWN) max(0, kotlin.math.ceil(countdown - 1).toInt()) else null
+    /** Seconds since the race began, for the start lights. */
+    var sinceStart = 0.0
+        private set
+
+    /**
+     * How many of the five start lights are lit, as a real gantry does it: the
+     * first comes on as the sequence begins, one more every half second, and
+     * then all five go out together.
+     */
+    val startLightsLit: Int
+        get() = when {
+            sinceStart >= LIGHTS_OUT -> 0
+            else -> min(5, (sinceStart / LIGHT_INTERVAL).toInt() + 1)
+        }
+
+    /** True while the lights are worth drawing at all. */
+    val startLightsVisible: Boolean
+        get() = state == State.RACING && sinceStart < LIGHTS_GONE
+
+    /** 1 while the lights hold, falling to 0 as they fade away after going out. */
+    val startLightsFade: Float
+        get() = ((LIGHTS_GONE - sinceStart) / (LIGHTS_GONE - LIGHTS_OUT))
+            .coerceIn(0.0, 1.0).toFloat()
 
     /**
      * Advance the game by a frame.
@@ -109,11 +136,8 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         val dt = min(frameDelta, MAX_FRAME_DELTA)
 
         when (state) {
-            State.COUNTDOWN -> {
-                countdown -= dt
-                if (countdown <= 0) state = State.RACING
-            }
             State.RACING -> {
+                sinceStart += dt
                 accumulator += dt
                 var steps = 0
                 while (accumulator >= STEP && steps < MAX_STEPS) {
@@ -141,6 +165,7 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         vehicle.step(STEP, input)
         holdInsideTheWorld(t)
+        if (!hitScenery(t)) return false
 
         if (vehicle.fuel <= 0.0) {
             fail("OUT OF FUEL")
@@ -160,6 +185,40 @@ class Game(private val storage: Storage = Storage.InMemory()) {
      * means the drag above failed to stop the car — at which point the choice
      * is between an abrupt halt and driving off the end of the world.
      */
+    /**
+     * Trees and rocks are solid.
+     *
+     * Above walking pace, hitting one ends the race: an F1 car is a carbon tub
+     * and a tree is a tree. Below it, nudging one just stops you — a race
+     * should not end because the car rolled into a rock at 5 km/h while you
+     * were working out which way to point it.
+     *
+     * @return false if the race is over, matching the physics step's contract.
+     */
+    private fun hitScenery(t: Track): Boolean {
+        val hit = t.obstacleNear(vehicle.x, vehicle.z, trackHint, CAR_REACH) ?: return true
+
+        val dx = vehicle.x - hit.x
+        val dz = vehicle.z - hit.z
+        val distance = hypot(dx, dz)
+        val nx = if (distance > 1e-6) dx / distance else 1.0
+        val nz = if (distance > 1e-6) dz / distance else 0.0
+        val impact = vehicle.speed
+
+        vehicle.hitSomethingSolid(nx, nz, hit.radius + CAR_REACH - distance + 0.05)
+        lastImpact = impact
+
+        if (impact > CRASH_SPEED) {
+            fail(if (hit.tree) "HIT A TREE" else "HIT A ROCK")
+            return false
+        }
+        return true
+    }
+
+    /** Set when the car hits something solid, for the haptics. */
+    var lastImpact = 0.0
+        private set
+
     /** True while the car is out in the deep grass, for the HUD's warning. */
     var beyondDeepGrass = false
         private set
@@ -222,9 +281,9 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         failReason = reason
     }
 
-    fun retry() { loadLevel(levelIndex); startCountdown() }
+    fun retry() { loadLevel(levelIndex); start() }
 
-    fun nextLevel() { loadLevel(levelIndex + 1); startCountdown() }
+    fun nextLevel() { loadLevel(levelIndex + 1); start() }
 
     fun toMenu() { state = State.MENU }
 
@@ -359,6 +418,19 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         private const val MAX_STEPS = 8
         private const val MAX_FRAME_DELTA = 0.05
         private const val CHECKPOINT_RADIUS = 12
+
+        /** How far the car's body reaches from its centre, for hitting things. */
+        private const val CAR_REACH = 1.6
+
+        /** Above this, in m/s, hitting a tree or a rock is the end of it. */
+        private const val CRASH_SPEED = 6.0
+
+        /** Seconds between one start light coming on and the next. */
+        private const val LIGHT_INTERVAL = 0.5
+        /** When all five go out together. */
+        private const val LIGHTS_OUT = 5 * LIGHT_INTERVAL
+        /** When the gantry has faded from the screen. */
+        private const val LIGHTS_GONE = LIGHTS_OUT + 0.8
 
         /** Radians (75 degrees) beyond which the view stops following the phone. */
         private const val MAX_VIEW_ROLL = 1.31

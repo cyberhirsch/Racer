@@ -93,11 +93,11 @@ if ! tap_text "START ENGINE"; then
     adb shell input tap $(( w * 3 / 4 )) $(( h * 4 / 5 ))
 fi
 
-# Wait for the race, rather than assuming how long the countdown takes.
+# Wait for the race to actually start, rather than assuming a fixed delay.
 #
 # The runner has no GPU and draws every pixel on the CPU, at about two frames a
 # second. Game time advances by at most a twentieth of a second per frame, so
-# the four-second countdown takes over half a minute there. Sleeping a fixed
+# the app takes a while to get there on a software rasteriser. Sleeping a fixed
 # six seconds meant the throttle was pressed while the lights were still on,
 # and the car never moved — which read as a broken control rather than a slow
 # emulator.
@@ -213,7 +213,7 @@ gy = sx * math.sin(a) + sy * math.cos(a)
 # with the console confirming 9.81:-0:0 and the app's own attitude line
 # reporting 180 degrees at that moment, the arithmetic only closes if gravity
 # arrived unchanged. An earlier round concluded the opposite from a reading
-# taken during a countdown, when the roll was last logged some races ago.
+# taken between races, when the roll was last logged some races ago.
 print(f"{gx:.3f}:{gy:.3f}:0")
 GRAV
 }
@@ -321,14 +321,12 @@ RESTART_WORKED=no
 MENU_WORKED=no
 if tap_rect "$RESTART_RECT" RESTART; then
     sleep 3
-    adb logcat -d | grep -q "state -> COUNTDOWN" && RESTART_WORKED=yes
+    adb logcat -d | grep -q "starting" && RESTART_WORKED=yes
 fi
 
-# Let the restarted countdown finish first. Pressing MENU during it was tried
-# and did nothing — which is worth knowing, but it makes for a test that
-# reports the wrong thing, so the press happens while the race is properly
-# under way.
-sleep 6
+# Give the restarted race a moment to settle before the next press, so MENU is
+# pressed while the race is properly under way.
+sleep 4
 adb logcat -d >> "$OUT/logcat-tilt.txt"
 adb logcat -c
 # Both buttons are the same kind of node, side by side in the same row, yet
@@ -449,8 +447,7 @@ if hud == "none" or log == "none":
     sys.exit(1)
 if abs(float(hud) - float(log)) > 0.1:
     print(f"FAIL: the HUD drew {hud} kg while the game is at {log} kg — it is "
-          f"recomposing too rarely to follow the race, which also stops the "
-          f"countdown counting.")
+          f"recomposing too rarely to follow the race.")
     sys.exit(1)
 print(f"OK: the HUD is live ({hud} kg drawn, {log} kg in the game).")
 HUD

@@ -51,27 +51,23 @@ class GameTest {
     }
 
     @Test
-    fun `the car cannot move until the countdown finishes`() {
+    fun `the car is live from the first frame`() {
         val g = Game()
         g.loadLevel(0)
-        g.startCountdown()
-        assertEquals(Game.State.COUNTDOWN, g.state)
-
-        // Full throttle during the countdown must do nothing.
-        repeat(60) { g.update(1.0 / 60.0, Input(throttle = 1.0)) }
-        assertEquals(0.0, g.vehicle.speed, 1e-9)
-        assertNotNull(g.countdownLabel)
-
-        repeat(240) { g.update(1.0 / 60.0, Input()) }
+        g.start()
         assertEquals(Game.State.RACING, g.state)
-        assertNull(g.countdownLabel)
+
+        // The car is live immediately: there is no countdown to sit through.
+        repeat(60) { g.update(1.0 / 60.0, Input(throttle = 1.0)) }
+        assertTrue("full throttle from the first frame should move the car", g.vehicle.speed > 5.0)
+        assertEquals(Game.State.RACING, g.state)
     }
 
     @Test
     fun `a full lap passes every checkpoint in order and records a best time`() {
         val g = Game()
         g.loadLevel(0)
-        g.startCountdown(0.0)
+        g.start()
         g.update(0.01, Input())
         assertEquals(Game.State.RACING, g.state)
 
@@ -92,7 +88,7 @@ class GameTest {
         storage.setBestTime(0, 5.0)
         val g = Game(storage)
         g.loadLevel(0)
-        g.startCountdown(0.0)
+        g.start()
         g.update(0.01, Input())
         play(g)
         assertEquals(Game.State.FINISHED, g.state)
@@ -104,7 +100,7 @@ class GameTest {
     fun `running out of fuel ends the race`() {
         val g = Game()
         g.loadLevel(0)
-        g.startCountdown(0.0)
+        g.start()
         g.update(0.01, Input())
         g.vehicle.fuel = 0.05
         play(g, maxSeconds = 60.0)
@@ -117,7 +113,7 @@ class GameTest {
     fun `retry restarts the same level and next level advances`() {
         val g = Game()
         g.loadLevel(1)
-        g.startCountdown(0.0)
+        g.start()
         g.update(0.01, Input())
         repeat(120) { g.update(1.0 / 60.0, Input(throttle = 1.0)) }
         assertTrue(g.vehicle.fuel < Levels.config(1).fuel)
@@ -125,7 +121,7 @@ class GameTest {
         g.retry()
         assertEquals(1, g.levelIndex)
         assertEquals(Levels.config(1).fuel, g.vehicle.fuel, 1e-9)
-        assertEquals(Game.State.COUNTDOWN, g.state)
+        assertEquals(Game.State.RACING, g.state)
 
         g.nextLevel()
         assertEquals(2, g.levelIndex)
@@ -142,7 +138,7 @@ class GameTest {
         fun run(frame: Double): Triple<Double, Double, Double> {
             val g = Game()
             g.loadLevel(0)
-            g.startCountdown(0.0)
+            g.start()
             g.update(0.001, Input())
             var t = 0.0
             while (t < 12.0) { g.update(frame, Input(throttle = 1.0, steer = 0.25)); t += frame }
@@ -161,7 +157,7 @@ class GameTest {
     fun `the camera trails the car and never rolls the horizon`() {
         val g = Game()
         g.loadLevel(0)
-        g.startCountdown(0.0)
+        g.start()
         g.update(0.01, Input())
         repeat(600) { g.update(1.0 / 60.0, Input(throttle = 1.0, steer = 0.6)) }
 
@@ -183,7 +179,7 @@ class GameTest {
     fun `checkpoint gates disappear as they are passed`() {
         val g = Game()
         g.loadLevel(0)
-        g.startCountdown(0.0)
+        g.start()
         g.update(0.01, Input())
         assertTrue(g.gateVisible(0))
         play(g)

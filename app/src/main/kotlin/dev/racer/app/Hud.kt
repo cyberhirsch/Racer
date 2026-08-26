@@ -92,7 +92,7 @@ fun Hud(
     Box(Modifier.fillMaxSize()) {
         when (game.state) {
             Game.State.MENU -> Menu(game, tiltAvailable, onStart)
-            Game.State.COUNTDOWN, Game.State.RACING ->
+            Game.State.RACING ->
                 Racing(game, frame, steering, onRecentre, onInvert, onPedals, onRetry, onMenu)
             Game.State.FINISHED -> Result(game, finished = true, onNext = onNext, onMenu = onMenu)
             Game.State.FAILED -> Result(game, finished = false, onNext = onRetry, onMenu = onMenu)
@@ -273,7 +273,7 @@ private fun Racing(
             SmallButton("MENU", modifier = Modifier.reportRect("MENU"), onClick = onMenu)
         }
 
-        Countdown(game, Modifier.align(Alignment.TopEnd))
+        StartLights(game, Modifier.align(Alignment.TopCenter))
     }
 }
 
@@ -292,7 +292,7 @@ private fun reportWhatIsDrawn(game: Game, tick: Int) {
         android.util.Log.i(
             "Racer",
             "hud speed=${game.speedKmh}kmh fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
-                "countdown=${game.countdownLabel ?: "-"} tick=$tick"
+                "lights=${game.startLightsLit} tick=$tick"
         )
     }
 }
@@ -399,30 +399,36 @@ private fun BrakeButton(modifier: Modifier, onChange: (Boolean) -> Unit) {
 }
 
 /**
- * The starting lights, in the corner.
+ * The five-lamp starting gantry.
  *
- * It was a huge glyph across the middle of the screen, which covered the road
- * at exactly the moment you want to see where you are pointed.
+ * Pure decoration: the car is live from the first frame, so the lights come on
+ * one by one and then go out, fading away rather than gating the race.
  */
 @Composable
-private fun Countdown(game: Game, modifier: Modifier) {
-    val n = game.countdownLabel ?: return
-    val go = n == 0
-    Box(
+private fun StartLights(game: Game, modifier: Modifier) {
+    if (!game.startLightsVisible) return
+    val lit = game.startLightsLit
+    val fade = game.startLightsFade
+    Row(
         modifier
-            .padding(top = 82.dp)
-            .size(if (go) 62.dp else 44.dp, 44.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(if (go) Red else Color(0xCC0A0C10))
-            .border(2.dp, if (go) Color.White else Red, RoundedCornerShape(22.dp)),
-        contentAlignment = Alignment.Center
+            .padding(top = 46.dp)
+            .alpha(fade)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xCC07090D))
+            .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(10.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        Text(
-            if (go) "GO!" else "$n",
-            color = Color.White,
-            fontSize = if (go) 16.sp else 22.sp,
-            fontWeight = FontWeight.Black
-        )
+        repeat(5) { i ->
+            val on = i < lit
+            Box(
+                Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(if (on) Color(0xFFFF2010) else Color(0xFF241014))
+                    .border(1.dp, if (on) Color(0x66FF6A50) else Color(0x1AFFFFFF), CircleShape)
+            )
+        }
     }
 }
 

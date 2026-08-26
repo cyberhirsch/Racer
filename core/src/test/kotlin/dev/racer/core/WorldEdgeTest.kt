@@ -18,7 +18,7 @@ class WorldEdgeTest {
     private fun runAside(seconds: Double): Pair<Double, Double> {
         val g = Game()
         g.loadLevel(0)
-        g.startCountdown(0.001)
+        g.start()
         val t = g.track!!
 
         // Point the car across the track and hold it there.

@@ -128,6 +128,22 @@ class Vehicle {
         speed = abs(vx)
     }
 
+    /**
+     * Stop dead against something solid, and be pushed clear of it.
+     *
+     * Not a bounce: an F1 car that hits a tree does not rebound, it stops. The
+     * push-out only exists so the car is not left inside the thing it hit,
+     * reporting a fresh collision every step.
+     */
+    fun hitSomethingSolid(normalX: Double, normalZ: Double, pushOut: Double) {
+        x += normalX * pushOut
+        z += normalZ * pushOut
+        vx = 0.0
+        vy = 0.0
+        yawRate = 0.0
+        speed = 0.0
+    }
+
     fun reset(x: Double = 0.0, z: Double = 0.0, yaw: Double = 0.0) {
         this.x = x; this.z = z; this.yaw = yaw
         vx = 0.0; vy = 0.0; yawRate = 0.0

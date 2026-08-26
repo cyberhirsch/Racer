@@ -26,6 +26,9 @@ object TrackMesh {
     private val GRAVEL = Material.rgb(0x6B5A3E, specular = 0.02f)
     private val GRASS = Material.rgb(0x2F4A2B, specular = 0.02f)
     private val DARK = Material.rgb(0x22262C, specular = 0.4f)
+    private val BARK = Material.rgb(0x5A4632, specular = 0.08f)
+    private val LEAF = Material.rgb(0x3F7A34, specular = 0.05f)
+    private val STONE = Material.rgb(0x8A8880, specular = 0.18f)
     private val CHECK_DARK = Material.rgb(0x111111, specular = 0.1f)
     private val CHECK_LIGHT = Material.rgb(0xF5F5F5, specular = 0.1f)
 
@@ -50,6 +53,7 @@ object TrackMesh {
         ribbon(b, track, track.halfWidth - 0.45, track.halfWidth - 0.15, 0.035f, LINE)
 
         kerbs(b, track)
+        scenery(b, track)
         startGantry(b, track, hw)
 
         val gates = track.checkpoints.mapIndexed { i, frameIndex ->
@@ -96,6 +100,56 @@ object TrackMesh {
                 if (stripe++ % 2 == 0) KERB_RED else KERB_WHITE
             )
             i += 2
+        }
+    }
+
+    /**
+     * The trees and rocks standing on the grass.
+     *
+     * Built into the same mesh as the road, because they never move and a
+     * separate draw call for each of two hundred trees would cost more than
+     * the whole circuit does. Their shapes are deliberately plain — a trunk
+     * and two cones, or a couple of leaning blocks — since at the distance
+     * they are ever seen from, silhouette is all that reads.
+     */
+    private fun scenery(b: MeshBuilder, track: Track) {
+        for ((i, o) in track.obstacles.withIndex()) {
+            val at = Vec3(o.x.toFloat(), 0f, o.z.toFloat())
+            // Deterministic variety without another random source: the index
+            // is as good a jumble as any, and it stays put between runs.
+            val wobble = ((i * 37) % 100) / 100f
+            if (o.tree) {
+                val height = 4.5f + wobble * 3.5f
+                val trunk = o.radius.toFloat() * 0.35f
+                b.addCylinder(
+                    trunk * 0.8f, trunk, height * 0.42f, 6,
+                    Mat4.translation(at.x, height * 0.21f, at.z), BARK, caps = false
+                )
+                b.addCylinder(
+                    0f, o.radius.toFloat() * 1.5f, height * 0.5f, 7,
+                    Mat4.translation(at.x, height * 0.55f, at.z), LEAF, caps = false
+                )
+                b.addCylinder(
+                    0f, o.radius.toFloat() * 1.1f, height * 0.4f, 7,
+                    Mat4.translation(at.x, height * 0.8f, at.z), LEAF, caps = false
+                )
+            } else {
+                val r = o.radius.toFloat()
+                b.addSphere(
+                    r, 6,
+                    Mat4.compose(Vec3(at.x, r * 0.35f, at.z), Vec3(wobble * 0.5f, wobble * 6f, 0f)) *
+                        Mat4.scale(1f, 0.7f, 1.15f),
+                    STONE
+                )
+                b.addSphere(
+                    r * 0.55f, 5,
+                    Mat4.compose(
+                        Vec3(at.x + r * 0.7f, r * 0.2f, at.z - r * 0.4f),
+                        Vec3(0f, wobble * 4f, 0f)
+                    ),
+                    STONE
+                )
+            }
         }
     }
 
