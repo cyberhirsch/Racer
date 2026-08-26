@@ -209,7 +209,12 @@ sx, sy = 9.81 * math.sin(roll), 9.81 * math.cos(roll)
 # TiltSteering rotates device axes by -a to get these, so undo that.
 gx = sx * math.cos(a) - sy * math.sin(a)
 gy = sx * math.sin(a) + sy * math.cos(a)
-print(f"{gx:.3f}:{gy:.3f}:0")
+# And negate, because the emulator console takes the opposite sign to what
+# Android's gravity sensor reports: a vector built to be level arrived as
+# exactly 180 degrees from level, and a 25 degree roll arrived as -155, which
+# is the same flip. The app keeps Android's documented convention — gravity
+# points away from the ground — and only the injection is turned round.
+print(f"{-gx:.3f}:{-gy:.3f}:0")
 GRAV
 }
 
