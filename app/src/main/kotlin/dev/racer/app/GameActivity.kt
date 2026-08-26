@@ -105,6 +105,8 @@ class GameActivity : ComponentActivity() {
                     // the race.
                     onRecentre = {
                         if (steering.neutral != 0.0) steering.levelOut() else steering.calibrate()
+                        Log.i(TAG, "recentre pressed, neutral is now " +
+                            "${"%.1f".format(Math.toDegrees(steering.neutral))}")
                     },
                     onInvert = { steering.invert = !steering.invert },
                     onPedals = { gas, braking ->
@@ -223,6 +225,8 @@ class GameActivity : ComponentActivity() {
         Log.i(
             TAG,
             "attitude rot=${tiltSensor.lastRotation} " +
+                "raw=${"%.1f".format(Math.toDegrees(steering.rawRoll))} " +
+                "neutral=${"%.1f".format(Math.toDegrees(steering.neutral))} " +
                 "phoneRoll=${"%.1f".format(Math.toDegrees(steering.rollFromNeutral))} " +
                 "viewRoll=${"%.1f".format(Math.toDegrees(steering.viewRoll))} " +
                 "steer=${"%.2f".format(steering.steer)}"
