@@ -466,32 +466,47 @@ import sys
 
 injected, app, drew, level, appLevel = (float(v) for v in sys.argv[1:6])
 
-# Not asserted here: whether level reads as straight ahead. The wheel was
-# centred on the emulator's own idea of level before any of this, because the
-# emulator does not present gravity the way a phone does — see the note where
-# that happens. What is checked below is the change, which it does report
-# faithfully. TiltSteeringTest pins the level-is-straight-ahead behaviour.
+
+def turn(a, b):
+    """How far b is from a, as a signed angle in (-180, 180]."""
+    return (b - a + 180) % 360 - 180
+
+
+# Everything here is a *change*, measured from the reading taken with the
+# wheel centred. Absolutes are meaningless on this device: the emulator puts
+# injected acceleration through its own idea of orientation and reports 180
+# degrees for a vector built to be level. What it tracks faithfully is the
+# change. TiltSteeringTest pins the level-is-straight-ahead behaviour, and on
+# a real phone it is a question for the person holding it.
+sensorMoved = turn(appLevel, app)
+cameraMoved = turn(level, drew)
 print(f"(centred first; level read {appLevel:.1f} deg, which is the emulator's "
       f"frame, not a phone's)")
-print(f"tilt chain: injected {injected:.0f} deg -> sensor {app:.1f} -> drawn {drew:.1f}; "
-      f"upright drawn {level:.1f}")
+print(f"tilt chain: injected {injected:.0f} deg -> sensor moved {sensorMoved:.1f} "
+      f"-> camera moved {cameraMoved:.1f} (upright drawn {level:.1f}, rolled {drew:.1f})")
 
-if abs(app - injected) > 6:
-    print(f"FAIL: the app read {app:.1f} deg from a {injected:.0f} deg tilt.")
+if abs(sensorMoved - injected) > 6:
+    print(f"FAIL: a {injected:.0f} deg tilt moved the app's reading by "
+          f"{sensorMoved:.1f} deg.")
     sys.exit(1)
 
 # The camera must roll AGAINST the phone. Turning the phone clockwise by 25
 # degrees has to roll the view 25 degrees anticlockwise, or the horizon tips
 # twice as far instead of standing still — which is exactly what shipped, and
 # was reported from a real device.
-if abs(drew + injected) > 8:
-    print(f"FAIL: the renderer drew with {drew:.1f} deg for a {injected:.0f} deg phone "
-          f"roll; it should be about {-injected:.0f} deg. Rolling the camera the same "
-          f"way as the phone doubles the tilt instead of cancelling it.")
+if abs(cameraMoved + injected) > 8:
+    print(f"FAIL: a {injected:.0f} deg phone roll moved the drawn roll by "
+          f"{cameraMoved:.1f} deg; it should be about {-injected:.0f} deg. Rolling "
+          f"the camera the same way as the phone doubles the tilt instead of "
+          f"cancelling it.")
     sys.exit(1)
 
+# With the wheel centred, the upright frame must be drawn level. If it is not,
+# the CENTRE press was swallowed and both readings above are saturated against
+# the camera's roll limit, which makes the change measurement meaningless.
 if abs(level) > 6:
-    print(f"FAIL: with the phone upright the renderer still drew a {level:.1f} deg roll.")
+    print(f"FAIL: centred and upright, the renderer still drew a {level:.1f} deg "
+          f"roll — the CENTRE press did not take.")
     sys.exit(1)
 
 print("OK: a real tilt reaches the renderer, and the camera rolls against it.")

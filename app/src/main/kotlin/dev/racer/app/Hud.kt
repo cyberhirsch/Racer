@@ -149,7 +149,15 @@ private fun Racing(
 
         // Top left: the steering needle and the two calibration buttons. They
         // used to sit in the bottom corner, which is now the brake's.
-        Row(Modifier.align(Alignment.TopStart), verticalAlignment = Alignment.Top) {
+        //
+        // Clear of the top edge, like the two on the right. In immersive mode
+        // that strip belongs to the system and a press in it is taken away:
+        // CENTRE sat at y=39 and every tap on it was swallowed, which cost a
+        // round of tilt debugging where the wheel was never actually centred.
+        Row(
+            Modifier.align(Alignment.TopStart).padding(top = 34.dp),
+            verticalAlignment = Alignment.Top
+        ) {
             Box(
                 Modifier.size(72.dp, 36.dp).clip(RoundedCornerShape(bottomStart = 36.dp, bottomEnd = 36.dp))
                     .background(Color(0xA60A0C10)),
