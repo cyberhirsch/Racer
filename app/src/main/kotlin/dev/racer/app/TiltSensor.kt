@@ -31,6 +31,7 @@ class TiltSensor(context: Context, private val steering: TiltSteering) : SensorE
     private var filteredX = 0f
     private var filteredY = 0f
     private var hasFiltered = false
+    private var lastLoggedRotation = -1
 
     fun start() {
         val sensor = gravity ?: accelerometer ?: return
@@ -56,7 +57,16 @@ class TiltSensor(context: Context, private val steering: TiltSteering) : SensorE
             y = filteredY
         }
 
-        steering.onGravity(x.toDouble(), y.toDouble(), displayRotationDegrees())
+        val rotation = displayRotationDegrees()
+        if (rotation != lastLoggedRotation) {
+            lastLoggedRotation = rotation
+            // The one number that decides which way "level" points. Sensor
+            // axes are fixed to the hardware, so everything the steering does
+            // is relative to this, and nothing downstream can be checked
+            // without knowing it.
+            android.util.Log.i("Racer", "display rotation=$rotation")
+        }
+        steering.onGravity(x.toDouble(), y.toDouble(), rotation)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

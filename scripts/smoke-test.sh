@@ -177,13 +177,37 @@ echo "== checking the horizon stays level =="
 # Keep the log so far; the tilt check clears logcat to isolate its own window.
 adb logcat -d > "$OUT/logcat-race.txt"
 ROLL_DEG=25
-python3 - "$ROLL_DEG" > /tmp/gravity.txt <<'GRAV'
+
+# Which way is level depends on how the display is rotated, because the sensor
+# axes are fixed to the hardware and this app runs in landscape. The gravity
+# injected here has to be expressed in those hardware axes.
+#
+# This used to inject a portrait-frame vector, and it passed only because the
+# app calibrated its neutral at the start of every race and quietly absorbed
+# the ninety degrees. Now that a race starts at true level, the offset has
+# nowhere to hide, and the injection has to be right.
+DISPLAY_ROTATION=$(adb logcat -d | grep -o "display rotation=[0-9]*" | tail -1 | cut -d= -f2 || true)
+DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
+echo "the display is rotated ${DISPLAY_ROTATION} degrees from the device's natural orientation"
+
+# Gravity in device axes for a given roll of the screen, by inverting exactly
+# the mapping TiltSteering applies.
+device_gravity() {
+    python3 - "$1" "$DISPLAY_ROTATION" <<'GRAV'
 import math, sys
-# Clockwise roll, per the convention stated in TiltSteering: gravity swings to
-# the right of the screen as the screen turns left underneath it.
-t = math.radians(float(sys.argv[1]))
-print(f"{9.81 * math.sin(t):.3f}:{9.81 * math.cos(t):.3f}:0")
+roll = math.radians(float(sys.argv[1]))
+a = math.radians(float(sys.argv[2]))
+# What the screen should see: gravity up the screen, swung by the roll.
+sx, sy = 9.81 * math.sin(roll), 9.81 * math.cos(roll)
+# TiltSteering rotates device axes by -a to get these, so undo that.
+gx = sx * math.cos(a) - sy * math.sin(a)
+gy = sx * math.sin(a) + sy * math.cos(a)
+print(f"{gx:.3f}:{gy:.3f}:0")
 GRAV
+}
+
+device_gravity "$ROLL_DEG" > /tmp/gravity.txt
+device_gravity 0 > /tmp/gravity-level.txt
 GRAVITY=$(cat /tmp/gravity.txt)
 echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
 
@@ -209,11 +233,15 @@ DRAW_ROLL=${DRAW_ROLL:-0}
 echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg"
 
 # Back to upright, so the last frame is a level reference.
-adb emu sensor set acceleration 0:9.81:0 || true
+adb emu sensor set acceleration "$(cat /tmp/gravity-level.txt)" || true
 sleep 4
 adb exec-out screencap -p > "$OUT/05-level.png"
 DRAW_ROLL_LEVEL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 | tail -1 || true)
 DRAW_ROLL_LEVEL=${DRAW_ROLL_LEVEL:-99}
+# Level must read as straight ahead without anyone having calibrated anything:
+# a race starts from true level now, so this is the whole of that promise.
+APP_ROLL_LEVEL=$(adb logcat -d | grep -o "phoneRoll=[-0-9.]*" | tail -1 | cut -d= -f2 || true)
+APP_ROLL_LEVEL=${APP_ROLL_LEVEL:-99}
 echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 
 
@@ -320,7 +348,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE tilt: injected ${ROLL_DEG} deg -> app read ${APP_ROLL} deg -> renderer drew ${DRAW_ROLL} deg (must oppose)"
     echo "SMOKE audio: $(grep -c "engine audio started" "$OUT/logcat.txt") engine synth start(s)"
     echo "SMOKE frame rate: $(grep -o "render [0-9.]* fps" "$OUT/logcat.txt" | tail -4 | tr '\n' ' ' || true)"
-    echo "SMOKE tilt: upright -> renderer drew ${DRAW_ROLL_LEVEL} deg"
+    echo "SMOKE tilt: level -> app read ${APP_ROLL_LEVEL} deg, renderer drew ${DRAW_ROLL_LEVEL} deg"
     echo "SMOKE horizon in frame (informational; barriers and fog make this noisy):"
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
     echo "SMOKE   upright: $HORIZON_LEVEL"
@@ -393,10 +421,17 @@ HUD
 # barriers, poles, the start gantry and distance fog all cut into the skyline,
 # and no amount of fitting made it trustworthy on a real scene. It is still
 # printed above, as a hint, but nothing depends on it.
-python3 - "$ROLL_DEG" "$APP_ROLL" "$DRAW_ROLL" "$DRAW_ROLL_LEVEL" <<'TILT' || FAILED=1
+python3 - "$ROLL_DEG" "$APP_ROLL" "$DRAW_ROLL" "$DRAW_ROLL_LEVEL" "$APP_ROLL_LEVEL" <<'TILT' || FAILED=1
 import sys
 
-injected, app, drew, level = (float(v) for v in sys.argv[1:5])
+injected, app, drew, level, appLevel = (float(v) for v in sys.argv[1:6])
+
+# Nothing calibrates on the player's behalf any more, so a phone held level
+# has to read as straight ahead on its own.
+if abs(appLevel) > 4:
+    print(f"FAIL: held level, the app read {appLevel:.1f} deg of wheel. Straight ahead "
+          f"is supposed to be level, with nothing calibrated.")
+    sys.exit(1)
 print(f"tilt chain: injected {injected:.0f} deg -> sensor {app:.1f} -> drawn {drew:.1f}; "
       f"upright drawn {level:.1f}")
 
