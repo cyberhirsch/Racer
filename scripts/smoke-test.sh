@@ -228,6 +228,10 @@ echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
 # largest roll of the run.
 adb logcat -c
 adb emu sensor set acceleration "$GRAVITY" || echo "could not drive the emulator's sensor"
+# What the emulator says it is actually holding, which is the only way to tell
+# a command it rejected from one it took and reinterpreted.
+SENSOR_ROLLED=$(adb emu sensor get acceleration 2>&1 | head -2 | tr '\n' ' ' || true)
+echo "sent $GRAVITY; the emulator reports $SENSOR_ROLLED"
 sleep 3
 adb exec-out screencap -p > "$OUT/04-rolled.png"
 # Read the roll the app had at this moment, before the sensor goes back.
@@ -245,7 +249,10 @@ DRAW_ROLL=${DRAW_ROLL:-0}
 echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg"
 
 # Back to upright, so the last frame is a level reference.
-adb emu sensor set acceleration "$(cat /tmp/gravity-level.txt)" || true
+LEVEL_GRAVITY=$(cat /tmp/gravity-level.txt)
+adb emu sensor set acceleration "$LEVEL_GRAVITY" || true
+SENSOR_LEVEL=$(adb emu sensor get acceleration 2>&1 | head -2 | tr '\n' ' ' || true)
+echo "sent $LEVEL_GRAVITY for level; the emulator reports $SENSOR_LEVEL"
 sleep 4
 adb exec-out screencap -p > "$OUT/05-level.png"
 DRAW_ROLL_LEVEL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 | tail -1 || true)
@@ -362,6 +369,8 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE frame rate: $(grep -o "render [0-9.]* fps" "$OUT/logcat.txt" | tail -4 | tr '\n' ' ' || true)"
     echo "SMOKE tilt: level -> app read ${APP_ROLL_LEVEL} deg, renderer drew ${DRAW_ROLL_LEVEL} deg"
     echo "SMOKE the display was rotated ${DISPLAY_ROTATION} deg; gravity was injected in those axes"
+    echo "SMOKE sent ${GRAVITY} for a ${ROLL_DEG} deg roll, and ${LEVEL_GRAVITY:-?} for level"
+    echo "SMOKE the emulator held: ${SENSOR_ROLLED:-?} then ${SENSOR_LEVEL:-?}"
     echo "SMOKE horizon in frame (informational; barriers and fog make this noisy):"
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
     echo "SMOKE   upright: $HORIZON_LEVEL"
