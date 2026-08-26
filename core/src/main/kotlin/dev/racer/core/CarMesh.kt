@@ -37,19 +37,43 @@ object CarMesh {
 
     class Wheel(val mesh: Mesh, val x: Float, val z: Float, val front: Boolean)
 
-    class Car(val body: Mesh, val wheels: List<Wheel>)
+    /**
+     * The parts a car can come apart into.
+     *
+     * The split is along the lines a real one breaks on: the wings and the
+     * bodywork are bolted to the tub and are meant to come off, the tub is the
+     * one thing that is meant not to.
+     */
+    enum class Part { CHASSIS, FRONT_WING, SIDEPOD_LEFT, SIDEPOD_RIGHT, ENGINE_COVER, REAR_WING }
+
+    class Car(val parts: Map<Part, Mesh>, val wheels: List<Wheel>) {
+        /** Everything the renderer draws, in a fixed order. */
+        val partList: List<Pair<Part, Mesh>> get() = Part.entries.mapNotNull { p -> parts[p]?.let { p to it } }
+
+        /**
+         * All the bodywork as one mesh.
+         *
+         * The car is drawn a part at a time so the pieces can move
+         * independently once it is wrecked; this is for measuring the shape as
+         * a whole, which is a question about the car and not about its parts.
+         */
+        val body: Mesh by lazy { Mesh.concat(partList.map { it.second }) }
+    }
 
     fun build(): Car {
-        val b = MeshBuilder()
-        monocoque(b)
-        frontWing(b)
-        sidepods(b)
-        floorAndDiffuser(b)
-        cockpitAndHalo(b)
-        engineCover(b)
-        rearWing(b)
-        suspension(b)
-        livery(b)
+        val parts = mapOf(
+            // The tub carries everything that is structurally part of it: the
+            // floor, the cockpit, the halo and the wishbones do not come off
+            // in one piece, so they do not get to be pieces.
+            Part.CHASSIS to piece { b ->
+                monocoque(b); floorAndDiffuser(b); cockpitAndHalo(b); suspension(b); livery(b)
+            },
+            Part.FRONT_WING to piece { frontWing(it) },
+            Part.SIDEPOD_LEFT to piece { sidepod(it, -1f) },
+            Part.SIDEPOD_RIGHT to piece { sidepod(it, 1f) },
+            Part.ENGINE_COVER to piece { engineCover(it) },
+            Part.REAR_WING to piece { rearWing(it) }
+        )
 
         val wheels = listOf(
             Wheel(wheel(FRONT_RADIUS, 0.30f, true), FRONT_TRACK, FRONT_AXLE, true),
@@ -57,7 +81,13 @@ object CarMesh {
             Wheel(wheel(REAR_RADIUS, 0.40f, false), REAR_TRACK, REAR_AXLE, false),
             Wheel(wheel(REAR_RADIUS, 0.40f, false), -REAR_TRACK, REAR_AXLE, false)
         )
-        return Car(b.build(), wheels)
+        return Car(parts, wheels)
+    }
+
+    private inline fun piece(build: (MeshBuilder) -> Unit): Mesh {
+        val b = MeshBuilder()
+        build(b)
+        return b.build()
     }
 
     /**
@@ -136,8 +166,8 @@ object CarMesh {
      * Sidepods: a rounded box whose vertices are pulled in toward the rear to
      * give the coke-bottle taper, plus inlets, bargeboards and a winglet.
      */
-    private fun sidepods(b: MeshBuilder) {
-        for (side in listOf(-1f, 1f)) {
+    private fun sidepod(b: MeshBuilder, side: Float) {
+        run {
             val origin = Vec3(side * 0.52f, 0.40f, -0.55f)
 
             // Built as a series of lofted rectangles so the taper is continuous.

@@ -66,6 +66,7 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
     fun loadLevel(index: Int) {
         levelIndex = index
+        wreck = null
         val cfg = Levels.config(index)
         val t = Track(cfg)
         track = t
@@ -98,6 +99,7 @@ class Game(private val storage: Storage = Storage.InMemory()) {
     fun start() {
         if (track == null) loadLevel(levelIndex)
         sinceStart = 0.0
+        wreck = null
         state = State.RACING
     }
 
@@ -152,6 +154,9 @@ class Game(private val storage: Storage = Storage.InMemory()) {
                     checkProgress()
                 }
             }
+            // A crash is not over when the race is: the wreck goes on
+            // tumbling, shedding pieces and bending itself, until it stops.
+            State.FAILED -> wreck?.step(dt)
             else -> Unit
         }
     }
@@ -204,16 +209,68 @@ class Game(private val storage: Storage = Storage.InMemory()) {
         val nx = if (distance > 1e-6) dx / distance else 1.0
         val nz = if (distance > 1e-6) dz / distance else 0.0
         val impact = vehicle.speed
+        // Taken before the collision response, which zeroes all of it: the
+        // wreck has to inherit the motion the car had when it hit, not the
+        // nothing it has immediately afterwards.
+        val heading = sin(vehicle.yaw) to cos(vehicle.yaw)
+        val worldVx = vehicle.vx * heading.first + vehicle.vy * heading.second
+        val worldVz = vehicle.vx * heading.second - vehicle.vy * heading.first
+        val wasYawRate = vehicle.yawRate
 
         vehicle.hitSomethingSolid(nx, nz, hit.radius + CAR_REACH - distance + 0.05)
         lastImpact = impact
 
         if (impact > CRASH_SPEED) {
+            wreck = Wreck(
+                car,
+                Wreck.Pose(vehicle.x, vehicle.z, vehicle.yaw, worldVx, worldVz, wasYawRate),
+                Wreck.Impact(
+                    // Where the car touched it, not where the obstacle's
+                    // centre is: a tree is hit on its bark. The normal points
+                    // from the obstacle toward the car, so this steps out to
+                    // the side of it the car arrived on — the other sign puts
+                    // the blow a whole trunk away, on the far side, and the
+                    // damage comes out far too gentle for the speed.
+                    x = hit.x + nx * hit.radius,
+                    z = hit.z + nz * hit.radius,
+                    height = IMPACT_HEIGHT,
+                    normalX = nx, normalZ = nz, speed = impact
+                )
+            )
             fail(if (hit.tree) "HIT A TREE" else "HIT A ROCK")
             return false
         }
         return true
     }
+
+    /**
+     * The car's geometry.
+     *
+     * Built once and shared: the renderer draws it and [Wreck] takes it apart,
+     * and building it at the moment of a crash would put a hitch in exactly
+     * the frame nobody wants one in.
+     */
+    val car: CarMesh.Car by lazy { CarMesh.build() }
+
+    /**
+     * What is left of the car, once there is anything left of it.
+     *
+     * Non-null from the moment of a crash until the next race starts. While it
+     * exists it, and not [vehicle], is where the car actually is.
+     */
+    var wreck: Wreck? = null
+        private set
+
+    /**
+     * True while the crash is still worth watching.
+     *
+     * The result panel covers the whole screen, and putting it up on the frame
+     * of the impact would hide the one thing the player wants to see. It waits
+     * until the wreck has stopped moving, or until a few seconds have passed
+     * for a shunt that is still cartwheeling across the grass.
+     */
+    val crashPlaying: Boolean
+        get() = wreck?.let { !it.settled && it.elapsed < RESULT_DELAY } ?: false
 
     /** Set when the car hits something solid, for the haptics. */
     var lastImpact = 0.0
@@ -363,9 +420,18 @@ class Game(private val storage: Storage = Storage.InMemory()) {
             camYaw += wrapPi(course - camYaw) * (1.0 - exp(-CAM_YAW_RATE * dt))
         }
 
-        val wantX = v.x - sin(camYaw) * back
+        // Once the car is a wreck it is the tub, not the vehicle, that is
+        // where the car is: the vehicle stopped dead against the tree while
+        // the tub went cartwheeling past it. Following the vehicle would leave
+        // the camera staring at the impact point with the crash happening off
+        // to one side of the screen.
+        val w = wreck
+        val focusX = w?.chassis?.position?.x?.toDouble() ?: v.x
+        val focusZ = w?.chassis?.position?.z?.toDouble() ?: v.z
+
+        val wantX = focusX - sin(camYaw) * back
         val wantY = height
-        val wantZ = v.z - cos(camYaw) * back
+        val wantZ = focusZ - cos(camYaw) * back
 
         if (!camInitialised) {
             camX = wantX; camY = wantY; camZ = wantZ; camInitialised = true
@@ -391,7 +457,10 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         return Camera(
             Vec3(camX, camY, camZ),
-            Vec3(v.x + sin(camYaw) * lead, 0.9, v.z + cos(camYaw) * lead),
+            // A wreck is what the player wants to watch, so look straight at
+            // it rather than well past it down a road nobody is driving.
+            if (w == null) Vec3(v.x + sin(camYaw) * lead, 0.9, v.z + cos(camYaw) * lead)
+            else Vec3(focusX, w.chassis.position.y.toDouble().coerceIn(0.4, 3.0), focusZ),
             fov,
             roll.toFloat()
         )
@@ -424,6 +493,12 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         /** Above this, in m/s, hitting a tree or a rock is the end of it. */
         private const val CRASH_SPEED = 6.0
+
+        /** Roughly nose height: where a car meets a tree. */
+        private const val IMPACT_HEIGHT = 0.45
+
+        /** How long a crash gets the screen to itself, seconds. */
+        private const val RESULT_DELAY = 3.2
 
         /** Seconds between one start light coming on and the next. */
         private const val LIGHT_INTERVAL = 0.5

@@ -95,7 +95,16 @@ fun Hud(
             Game.State.RACING ->
                 Racing(game, frame, steering, onRecentre, onInvert, onPedals, onRetry, onMenu)
             Game.State.FINISHED -> Result(game, finished = true, onNext = onNext, onMenu = onMenu)
-            Game.State.FAILED -> Result(game, finished = false, onNext = onRetry, onMenu = onMenu)
+            // The racing HUD stays up while the wreck is still tumbling: it
+            // keeps the crash visible, and it keeps MENU and RESTART reachable
+            // rather than stranding the player behind a panel that has not
+            // arrived yet.
+            Game.State.FAILED ->
+                if (game.crashPlaying) {
+                    Racing(game, frame, steering, onRecentre, onInvert, onPedals, onRetry, onMenu)
+                } else {
+                    Result(game, finished = false, onNext = onRetry, onMenu = onMenu)
+                }
         }
     }
 }
@@ -511,9 +520,16 @@ private fun Result(game: Game, finished: Boolean, onNext: () -> Unit, onMenu: ()
             } else {
                 Stat("Progress", "${(game.lapProgress * 100).toInt()}%")
                 Stat("Checkpoints", "${game.nextCheckpoint}/${game.checkpointTotal}")
+                val wreck = game.wreck
+                if (wreck != null) {
+                    Stat("Impact", "${(game.lastImpact * 3.6).toInt()} km/h")
+                    Stat("Pieces lost", "${wreck.piecesLost}")
+                    Stat("Bodywork", "%.0f cm out of shape".format(wreck.worstDamage * 100f))
+                }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Lift and coast — part throttle burns far less fuel.",
+                    if (wreck != null) "Trees do not move. Use the run-off."
+                    else "Lift and coast — part throttle burns far less fuel.",
                     color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center
                 )
             }

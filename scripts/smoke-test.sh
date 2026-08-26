@@ -403,6 +403,13 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE what the tree says about the two buttons:"
     echo "$BUTTON_NODES" | cut -c1-400 | sed 's/^/SMOKE /'
     echo "SMOKE RESULT crashed=$CRASHED shader=$SHADER reachedRacing=$REACHED_RACING topSpeed=${TOP}kmh foreground=$FOREGROUND"
+    # Whether the run happened to wreck the car. Not asserted — where the car
+    # ends up on an emulator running at three frames a second is not something
+    # to hang a build on — but when it does happen it is the one report that
+    # the crash simulation ran on a real device and the renderer survived
+    # rewriting its own vertex buffers mid-frame.
+    WRECKED=$(grep -o "wreck: .*" "$OUT/logcat-race.txt" 2>/dev/null | tail -1 || true)
+    echo "SMOKE wreck (not asserted): ${WRECKED:-the car never hit anything this run}"
 } >> "$VERDICT"
 
 # Previews are generated unconditionally: a failing run is exactly when someone

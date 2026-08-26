@@ -69,6 +69,7 @@ class GameActivity : ComponentActivity() {
 
     private var lastLoggedState: Game.State? = null
     private var lastHeartbeat = 0L
+    private var loggedWreck = false
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -208,6 +209,21 @@ class GameActivity : ComponentActivity() {
             Log.i(TAG, "state -> ${game.state}")
             lastHeartbeat = 0L
         }
+
+        // A wreck is the one thing on screen that the renderer draws from
+        // buffers it rewrites while it is drawing them, so it is worth being
+        // able to see from a log that one happened and how it went.
+        game.wreck?.let { w ->
+            if (!loggedWreck) {
+                loggedWreck = true
+                Log.i(
+                    TAG,
+                    "wreck: ${w.piecesLost} piece(s) off, " +
+                        "${"%.2f".format(w.worstDamage)}m out of shape, " +
+                        "${w.bodies.size} bodies"
+                )
+            }
+        } ?: run { loggedWreck = false }
 
         // Wall-clock seconds, not simulated ones. Driving this from the
         // physics step meant that when the frame rate collapsed the log went

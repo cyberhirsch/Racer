@@ -67,6 +67,53 @@ class SceneryTest {
             g.failReason?.contains("HIT") == true)
     }
 
+    /**
+     * And it leaves a wreck behind, which goes on playing out after the race
+     * has been declared over.
+     */
+    @Test
+    fun `a crash leaves a wreck that tumbles and comes to rest`() {
+        val g = Game()
+        g.loadLevel(0)
+        g.start()
+        val t = g.track!!
+        val tree = t.obstacles.first()
+        val f = t.frames[t.locate(tree.x, tree.z, 0).index]
+        g.vehicle.x = tree.x - f.right.x * 6.0
+        g.vehicle.z = tree.z - f.right.z * 6.0
+        g.vehicle.yaw = Math.atan2(f.right.x, f.right.z)
+        g.vehicle.vx = 45.0
+
+        var steps = 0
+        while (g.state == Game.State.RACING && steps++ < 240) g.update(Game.STEP, Input())
+        assertEquals(Game.State.FAILED, g.state)
+
+        val w = g.wreck
+        assertTrue("a crash should leave a wreck", w != null)
+        w!!
+        assertTrue("something should have come off at 45 m/s", w.piecesLost > 0)
+        assertTrue("the car should be bent", w.worstDamage > 0.05f)
+
+        // The race is over, but the crash is not: the game keeps stepping it.
+        var t2 = 0.0
+        while (t2 < 15.0 && !w.settled) { g.update(1.0 / 60.0, Input()); t2 += 1.0 / 60.0 }
+        assertTrue("the wreck never settled", w.settled)
+        println("wreck: %d pieces off, worst bend %.2f m, settled in %.1f s"
+            .format(w.piecesLost, w.worstDamage, t2))
+
+        // The camera has to be looking at the wreck, not at the tree it left.
+        val cam = g.camera(1.0 / 60.0, 2.0f)
+        val toWreck = hypot(
+            cam.target.x - w.chassis.position.x.toDouble(),
+            cam.target.z - w.chassis.position.z.toDouble()
+        )
+        assertTrue("the camera is looking $toWreck m away from the wreck", toWreck < 1.0)
+
+        // And starting again clears it.
+        g.retry()
+        assertTrue("a new race must not start in the old wreck", g.wreck == null)
+    }
+
     /** Rolling into one at walking pace should not. */
     @Test
     fun `nudging something solid slowly just stops the car`() {

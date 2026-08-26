@@ -9,6 +9,7 @@ import dev.racer.core.Mesh
 import dev.racer.core.Track
 import dev.racer.core.TrackMesh
 import dev.racer.core.Vec3
+import dev.racer.core.Wreck
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
@@ -42,9 +43,18 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
 
     private var trackBuffers: GpuMesh? = null
     private var gateBuffers: List<GpuMesh> = emptyList()
-    private var carBody: GpuMesh? = null
     private var carShadow: GpuMesh? = null
+    private var carParts: List<Pair<CarMesh.Part, GpuMesh>> = emptyList()
     private var wheels: List<Pair<GpuMesh, CarMesh.Wheel>> = emptyList()
+
+    /**
+     * Every piece of car, found by the mesh it was built from.
+     *
+     * A wreck hands back bodies that carry the same [Mesh] instances the car
+     * was built with, so this is how a body finds the buffers it belongs to
+     * without the two sides having to agree on an ordering.
+     */
+    private var carGpu: MutableMap<Mesh, GpuMesh> = HashMap()
 
     private var width = 1
     private var height = 1
@@ -64,6 +74,25 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     fun setTrack(track: Track) { pendingTrack.set(track) }
 
     private class GpuMesh(val vao: Int, val vbo: Int, val ibo: Int, val indexCount: Int) {
+        /**
+         * Which version of a deformable piece's shape is currently on the GPU.
+         *
+         * A wreck rebuilds a piece's vertices only when something actually
+         * hits it, which is a handful of times over the whole crash — so the
+         * buffer is re-uploaded on that same handful of frames rather than
+         * every frame, and the rest of the time this costs one integer
+         * comparison.
+         */
+        var uploadedShape = -1
+
+        fun replaceVertices(v: FloatArray) {
+            val bytes = ByteBuffer.allocateDirect(v.size * 4).order(ByteOrder.nativeOrder())
+            bytes.asFloatBuffer().put(v)
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbo)
+            GLES30.glBufferSubData(GLES30.GL_ARRAY_BUFFER, 0, v.size * 4, bytes)
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+        }
+
         fun release() {
             GLES30.glDeleteVertexArrays(1, intArrayOf(vao), 0)
             GLES30.glDeleteBuffers(2, intArrayOf(vbo, ibo), 0)
@@ -93,11 +122,21 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         uAlpha = GLES30.glGetUniformLocation(program, "uAlpha")
         uTint = GLES30.glGetUniformLocation(program, "uTint")
 
-        // The car never changes, so build it once.
-        val car = CarMesh.build()
-        carBody = upload(car.body)
+        // The same car the game hands to a wreck, so the pieces a crash takes
+        // apart are the pieces being drawn.
+        val car = game.car
+        carGpu = HashMap()
+        carParts = car.partList.map { (part, mesh) ->
+            val gpu = upload(mesh, dynamic = true)
+            carGpu[mesh] = gpu
+            part to gpu
+        }
         carShadow = upload(CarMesh.shadow())
-        wheels = car.wheels.map { upload(it.mesh) to it }
+        wheels = car.wheels.map { w ->
+            val gpu = upload(w.mesh, dynamic = true)
+            carGpu[w.mesh] = gpu
+            gpu to w
+        }
 
         // A surface can be recreated (app resumed, context lost); rebuild the
         // track next frame if we already have one.
@@ -196,6 +235,10 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
      */
     private fun drawShadow(viewProjection: Mat4) {
         val shadow = carShadow ?: return
+        // One patch of shade under one car. Once it is in pieces there is no
+        // single place to put it, and leaving it behind at the impact point
+        // draws a car-shaped shadow with no car above it.
+        if (game.wreck != null) return
         val v = game.vehicle
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_ZERO, GLES30.GL_SRC_COLOR)
@@ -212,6 +255,13 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
     }
 
     private fun drawCar(viewProjection: Mat4) {
+        game.wreck?.let { drawWreck(it, viewProjection); return }
+
+        // A wreck leaves its damage in the GPU's copy of the bodywork, and
+        // nothing else ever writes those buffers — so without this the next
+        // race starts with the last one's crumpled nose still on the car.
+        restoreUndamagedBodywork()
+
         val v = game.vehicle
 
         // Cosmetic body roll and pitch, driven by the physics state.
@@ -222,7 +272,10 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
             Vec3(pitch.toFloat(), v.yaw.toFloat(), roll.toFloat())
         )
 
-        carBody?.let { draw(it, carModel, viewProjection) }
+        // In one piece the car is still one rigid object: every part gets the
+        // same matrix. It is drawn a part at a time only so that the moment it
+        // stops being one object, nothing about the drawing has to change.
+        for ((_, gpu) in carParts) draw(gpu, carModel, viewProjection)
 
         for ((mesh, wheel) in wheels) {
             // Front wheels steer; all four spin with the road speed.
@@ -232,6 +285,34 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
                 Vec3(0f, steer, 0f)
             ) * Mat4.rotationX(-v.wheelSpin.toFloat())
             draw(mesh, carModel * local, viewProjection)
+        }
+    }
+
+    /** Put the factory shape back on the GPU, if a crash replaced it. */
+    private fun restoreUndamagedBodywork() {
+        for ((mesh, gpu) in carGpu) {
+            if (gpu.uploadedShape == -1) continue
+            gpu.replaceVertices(mesh.vertices)
+            gpu.uploadedShape = -1
+        }
+    }
+
+    /**
+     * The car once it has stopped being one.
+     *
+     * Every piece carries its own matrix from the simulation, so this does not
+     * need to know what is still bolted on and what is not — a piece that is
+     * still attached simply reports the tub's pose. The only extra work is
+     * handing the GPU a piece's new shape on the frames it has been bent.
+     */
+    private fun drawWreck(wreck: Wreck, viewProjection: Mat4) {
+        for (body in wreck.bodies) {
+            val gpu = carGpu[body.base] ?: continue
+            if (gpu.uploadedShape != body.shapeVersion) {
+                gpu.replaceVertices(body.vertices)
+                gpu.uploadedShape = body.shapeVersion
+            }
+            draw(gpu, body.modelMatrix(), viewProjection)
         }
     }
 
@@ -251,7 +332,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
         gateBuffers = built.gates.map { upload(it.mesh) }
     }
 
-    private fun upload(mesh: Mesh): GpuMesh {
+    private fun upload(mesh: Mesh, dynamic: Boolean = false): GpuMesh {
         val vao = IntArray(1); GLES30.glGenVertexArrays(1, vao, 0)
         val buffers = IntArray(2); GLES30.glGenBuffers(2, buffers, 0)
         GLES30.glBindVertexArray(vao[0])
@@ -264,7 +345,12 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
             .order(ByteOrder.nativeOrder())
         vertexBytes.asFloatBuffer().put(mesh.vertices)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, buffers[0])
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, mesh.vertices.size * 4, vertexBytes, GLES30.GL_STATIC_DRAW)
+        // A piece that can be crumpled has its vertices replaced as it takes
+        // damage, so the driver is told to expect that up front.
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER, mesh.vertices.size * 4, vertexBytes,
+            if (dynamic) GLES30.GL_DYNAMIC_DRAW else GLES30.GL_STATIC_DRAW
+        )
 
         val indexBytes = ByteBuffer.allocateDirect(mesh.indices.size * 4)
             .order(ByteOrder.nativeOrder())

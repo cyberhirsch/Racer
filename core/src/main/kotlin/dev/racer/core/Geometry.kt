@@ -148,9 +148,78 @@ class Mesh(val vertices: FloatArray, val indices: IntArray) {
     val vertexCount get() = vertices.size / FLOATS_PER_VERTEX
     val indexCount get() = indices.size
 
+    /**
+     * The middle of the mesh's bounding box, and the radius of a sphere around
+     * it that contains every vertex.
+     *
+     * A wreck spins its pieces about this point and bounces them off the
+     * ground at this radius. Measured rather than declared: a hand-written
+     * pivot for each piece is one more list to get out of step with the
+     * geometry, and this is exactly as good.
+     */
+    fun bounds(): Bounds {
+        if (vertices.isEmpty()) return Bounds(Vec3(0f, 0f, 0f), 0f, Vec3(0f, 0f, 0f))
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+        var i = 0
+        while (i < vertices.size) {
+            val x = vertices[i]; val y = vertices[i + 1]; val z = vertices[i + 2]
+            if (x < minX) minX = x; if (x > maxX) maxX = x
+            if (y < minY) minY = y; if (y > maxY) maxY = y
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+            i += FLOATS_PER_VERTEX
+        }
+        val centre = Vec3((minX + maxX) / 2f, (minY + maxY) / 2f, (minZ + maxZ) / 2f)
+        val half = Vec3((maxX - minX) / 2f, (maxY - minY) / 2f, (maxZ - minZ) / 2f)
+        var radius = 0f
+        i = 0
+        while (i < vertices.size) {
+            val dx = vertices[i] - centre.x
+            val dy = vertices[i + 1] - centre.y
+            val dz = vertices[i + 2] - centre.z
+            val d = sqrt(dx * dx + dy * dy + dz * dz)
+            if (d > radius) radius = d
+            i += FLOATS_PER_VERTEX
+        }
+        return Bounds(centre, radius, half)
+    }
+
+    class Bounds(val centre: Vec3, val radius: Float, val half: Vec3) {
+        /**
+         * How far the box reaches below its centre once turned by [rotation].
+         *
+         * The bounding sphere is the wrong answer for anything flat: a front
+         * wing is two metres across and three centimetres thick, and a sphere
+         * around it would have the thing come to rest a metre off the ground.
+         * This is the box's support distance along -Y, which is right whether
+         * the wing is lying flat or standing on its endplate.
+         */
+        fun reachBelow(rotation: Mat4): Float =
+            kotlin.math.abs(rotation.m[1]) * half.x +
+                kotlin.math.abs(rotation.m[5]) * half.y +
+                kotlin.math.abs(rotation.m[9]) * half.z
+    }
+
     companion object {
         const val FLOATS_PER_VERTEX = 10
         const val STRIDE_BYTES = FLOATS_PER_VERTEX * 4
+
+        /** Several meshes as one, with the index buffers rebased. */
+        fun concat(meshes: List<Mesh>): Mesh {
+            val vertices = FloatArray(meshes.sumOf { it.vertices.size })
+            val indices = IntArray(meshes.sumOf { it.indices.size })
+            var v = 0
+            var i = 0
+            var base = 0
+            for (m in meshes) {
+                m.vertices.copyInto(vertices, v)
+                for (k in m.indices.indices) indices[i + k] = m.indices[k] + base
+                base += m.vertexCount
+                v += m.vertices.size
+                i += m.indices.size
+            }
+            return Mesh(vertices, indices)
+        }
     }
 }
 
@@ -415,4 +484,73 @@ class MeshBuilder {
     }
 
     fun build(): Mesh = Mesh(verts.toFloatArray(), idx.toIntArray())
+}
+
+/**
+ * A unit quaternion, for orientations that are integrated over time.
+ *
+ * The rest of this file gets by with Euler angles, because everything else
+ * that rotates does so about one axis at a time. A wreck does not: a body
+ * tumbling free is spinning about all three at once, and Euler angles fed back
+ * into themselves gimbal-lock and then explode. Quaternions renormalise
+ * instead of drifting.
+ */
+data class Quat(val x: Float, val y: Float, val z: Float, val w: Float) {
+
+    operator fun times(o: Quat) = Quat(
+        w * o.x + x * o.w + y * o.z - z * o.y,
+        w * o.y - x * o.z + y * o.w + z * o.x,
+        w * o.z + x * o.y - y * o.x + z * o.w,
+        w * o.w - x * o.x - y * o.y - z * o.z
+    )
+
+    fun normalized(): Quat {
+        val l = sqrt(x * x + y * y + z * z + w * w)
+        return if (l < 1e-9f) identity() else Quat(x / l, y / l, z / l, w / l)
+    }
+
+    fun rotate(v: Vec3): Vec3 {
+        val u = Vec3(x, y, z)
+        val s = w
+        return u * (2f * u.dot(v)) + v * (s * s - u.dot(u)) + u.cross(v) * (2f * s)
+    }
+
+    /**
+     * Advance by an angular velocity (rad/s about each world axis) for [dt].
+     *
+     * First-order integration, renormalised every step: over the few seconds a
+     * wreck is in motion the error is far below what anyone can see, and it
+     * cannot run away the way an un-normalised quaternion would.
+     */
+    fun integrate(angularVelocity: Vec3, dt: Float): Quat {
+        val h = dt * 0.5f
+        val spin = Quat(angularVelocity.x * h, angularVelocity.y * h, angularVelocity.z * h, 0f)
+        val d = spin * this
+        return Quat(x + d.x, y + d.y, z + d.z, w + d.w).normalized()
+    }
+
+    fun toMat4(): Mat4 {
+        val xx = x * x; val yy = y * y; val zz = z * z
+        val xy = x * y; val xz = x * z; val yz = y * z
+        val wx = w * x; val wy = w * y; val wz = w * z
+        return Mat4(floatArrayOf(
+            1f - 2f * (yy + zz), 2f * (xy + wz), 2f * (xz - wy), 0f,
+            2f * (xy - wz), 1f - 2f * (xx + zz), 2f * (yz + wx), 0f,
+            2f * (xz + wy), 2f * (yz - wx), 1f - 2f * (xx + yy), 0f,
+            0f, 0f, 0f, 1f
+        ))
+    }
+
+    companion object {
+        fun identity() = Quat(0f, 0f, 0f, 1f)
+
+        fun axisAngle(axis: Vec3, radians: Float): Quat {
+            val a = axis.normalized()
+            val h = radians * 0.5f
+            val s = sin(h)
+            return Quat(a.x * s, a.y * s, a.z * s, cos(h))
+        }
+
+        fun yaw(radians: Float) = axisAngle(Vec3(0f, 1f, 0f), radians)
+    }
 }
