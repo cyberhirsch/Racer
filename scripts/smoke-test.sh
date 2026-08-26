@@ -191,7 +191,7 @@ ROLL_DEG=25
 # once at startup gave the wrong answer: the app read 180 degrees from a vector
 # built for a display that had since turned.
 ROT_LOG=$(cat "$OUT/logcat-race.txt" 2>/dev/null; adb logcat -d 2>/dev/null || true)
-DISPLAY_ROTATION=$(echo "$ROT_LOG" | grep -o "rot=[0-9]*" | tail -1 | cut -d= -f2 || true)
+DISPLAY_ROTATION=$(echo "$ROT_LOG" | grep -o "attitude rot=[0-9]*" | tail -1 | cut -d= -f2 || true)
 [ -n "$DISPLAY_ROTATION" ] || DISPLAY_ROTATION=$(echo "$ROT_LOG" \
     | grep -o "display rotation=[0-9]*" | tail -1 | cut -d= -f2 || true)
 DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
@@ -234,6 +234,7 @@ adb logcat -c
 # the emulator using the opposite sign convention. It does not: asked what it
 # holds, it reports exactly what it is given.
 adb emu "sensor set acceleration $GRAVITY" || echo "could not drive the emulator's sensor"
+sleep 2
 # What the emulator says it is actually holding, which is the only way to tell
 # a command it rejected from one it took and reinterpreted.
 SENSOR_ROLLED=$(adb emu "sensor get acceleration" 2>&1 | head -2 | tr '\n' ' ' || true)
@@ -243,7 +244,8 @@ adb exec-out screencap -p > "$OUT/04-rolled.png"
 # Read the roll the app had at this moment, before the sensor goes back.
 # phoneRoll is how far the phone is turned; the camera roll is the negative of
 # it, which is the whole point of the check below.
-APP_ROLL=$(adb logcat -d | grep -o "phoneRoll=[-0-9.]*" | tail -1 | cut -d= -f2 || true)
+APP_ROLL=$(adb logcat -d | grep -o "attitude .*phoneRoll=[-0-9.]*" | tail -1 \
+    | grep -o "phoneRoll=[-0-9.]*" | cut -d= -f2 || true)
 APP_ROLL=${APP_ROLL:-0}
 # The furthest the renderer actually rolled while the phone was tilted. Picked
 # by size rather than by value: the camera rolls the opposite way to the phone,
@@ -265,7 +267,8 @@ DRAW_ROLL_LEVEL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 |
 DRAW_ROLL_LEVEL=${DRAW_ROLL_LEVEL:-99}
 # Level must read as straight ahead without anyone having calibrated anything:
 # a race starts from true level now, so this is the whole of that promise.
-APP_ROLL_LEVEL=$(adb logcat -d | grep -o "phoneRoll=[-0-9.]*" | tail -1 | cut -d= -f2 || true)
+APP_ROLL_LEVEL=$(adb logcat -d | grep -o "attitude .*phoneRoll=[-0-9.]*" | tail -1 \
+    | grep -o "phoneRoll=[-0-9.]*" | cut -d= -f2 || true)
 APP_ROLL_LEVEL=${APP_ROLL_LEVEL:-99}
 echo "with the phone upright the renderer drew with ${DRAW_ROLL_LEVEL} deg"
 

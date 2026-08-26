@@ -226,25 +226,36 @@ class GameActivity : ComponentActivity() {
             Log.i(TAG, "state -> ${game.state}")
             lastHeartbeat = 0L
         }
+
+        // Wall-clock seconds, not simulated ones. Driving this from the
+        // physics step meant that when the frame rate collapsed the log went
+        // quiet — so a renderer running at two frames a second looked exactly
+        // like a hung app, twice.
+        val now = System.nanoTime()
+        if (now - lastHeartbeat < 1_000_000_000L) return
+        lastHeartbeat = now
+
+        // Where the phone is, in every state. This used to be logged only
+        // while racing, so anything reading it during a countdown got the last
+        // value from some earlier race — which is stale by any amount at all,
+        // and sent three rounds of tilt debugging chasing numbers that were
+        // not describing the moment they were being compared against.
+        Log.i(
+            TAG,
+            "attitude rot=${tiltSensor.lastRotation} " +
+                "phoneRoll=${"%.1f".format(Math.toDegrees(steering.rollFromNeutral))} " +
+                "viewRoll=${"%.1f".format(Math.toDegrees(steering.viewRoll))} " +
+                "steer=${"%.2f".format(steering.steer)}"
+        )
+
         if (game.state == Game.State.RACING) {
-            // Wall-clock seconds, not simulated ones. Driving this from the
-            // physics step meant that when the frame rate collapsed the log
-            // went quiet — so a renderer running at two frames a second looked
-            // exactly like a hung app, twice.
-            val now = System.nanoTime()
-            if (now - lastHeartbeat >= 1_000_000_000L) {
-                lastHeartbeat = now
-                Log.i(
-                    TAG,
-                    "racing speed=${game.speedKmh}kmh gear=${game.gearLabel} " +
-                        "fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
-                        "cp=${game.nextCheckpoint}/${game.checkpointTotal} " +
-                        "throttle=${"%.2f".format(throttle)} steer=${"%.2f".format(steering.steer)} " +
-                        "rot=${tiltSensor.lastRotation} " +
-                        "phoneRoll=${"%.1f".format(Math.toDegrees(steering.rollFromNeutral))} " +
-                        "viewRoll=${"%.1f".format(Math.toDegrees(steering.viewRoll))}"
-                )
-            }
+            Log.i(
+                TAG,
+                "racing speed=${game.speedKmh}kmh gear=${game.gearLabel} " +
+                    "fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
+                    "cp=${game.nextCheckpoint}/${game.checkpointTotal} " +
+                    "throttle=${"%.2f".format(throttle)}"
+            )
         }
     }
 
