@@ -209,7 +209,13 @@ sx, sy = 9.81 * math.sin(roll), 9.81 * math.cos(roll)
 # TiltSteering rotates device axes by -a to get these, so undo that.
 gx = sx * math.cos(a) - sy * math.sin(a)
 gy = sx * math.sin(a) + sy * math.cos(a)
-print(f"{gx:.3f}:{gy:.3f}:0")
+# Negated, because the emulator's "acceleration" is the opposite of the
+# gravity vector Android hands the app. Measured, not assumed: with the console
+# confirming it held -9.81:0:0, the app read 180 degrees — which is what it
+# reads when gravity points the other way. Two rounds were wasted concluding
+# this was wrong, because the set command was not reaching the console at all
+# and no injection changed anything.
+print(f"{-gx:.3f}:{-gy:.3f}:0")
 GRAV
 }
 
