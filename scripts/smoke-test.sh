@@ -209,12 +209,7 @@ sx, sy = 9.81 * math.sin(roll), 9.81 * math.cos(roll)
 # TiltSteering rotates device axes by -a to get these, so undo that.
 gx = sx * math.cos(a) - sy * math.sin(a)
 gy = sx * math.sin(a) + sy * math.cos(a)
-# And negate, because the emulator console takes the opposite sign to what
-# Android's gravity sensor reports: a vector built to be level arrived as
-# exactly 180 degrees from level, and a 25 degree roll arrived as -155, which
-# is the same flip. The app keeps Android's documented convention — gravity
-# points away from the ground — and only the injection is turned round.
-print(f"{-gx:.3f}:{-gy:.3f}:0")
+print(f"{gx:.3f}:{gy:.3f}:0")
 GRAV
 }
 
@@ -227,10 +222,15 @@ echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
 # the steering is calibrated, and that would otherwise be picked up as the
 # largest roll of the run.
 adb logcat -c
-adb emu sensor set acceleration "$GRAVITY" || echo "could not drive the emulator's sensor"
+# One argument, not five. A vector for a landscape display often starts with a
+# minus sign, and adb takes such an argument for one of its own flags — which
+# is why two rounds of injecting gravity changed nothing at all and looked like
+# the emulator using the opposite sign convention. It does not: asked what it
+# holds, it reports exactly what it is given.
+adb emu "sensor set acceleration $GRAVITY" || echo "could not drive the emulator's sensor"
 # What the emulator says it is actually holding, which is the only way to tell
 # a command it rejected from one it took and reinterpreted.
-SENSOR_ROLLED=$(adb emu sensor get acceleration 2>&1 | head -2 | tr '\n' ' ' || true)
+SENSOR_ROLLED=$(adb emu "sensor get acceleration" 2>&1 | head -2 | tr '\n' ' ' || true)
 echo "sent $GRAVITY; the emulator reports $SENSOR_ROLLED"
 sleep 3
 adb exec-out screencap -p > "$OUT/04-rolled.png"
@@ -250,8 +250,8 @@ echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg
 
 # Back to upright, so the last frame is a level reference.
 LEVEL_GRAVITY=$(cat /tmp/gravity-level.txt)
-adb emu sensor set acceleration "$LEVEL_GRAVITY" || true
-SENSOR_LEVEL=$(adb emu sensor get acceleration 2>&1 | head -2 | tr '\n' ' ' || true)
+adb emu "sensor set acceleration $LEVEL_GRAVITY" || true
+SENSOR_LEVEL=$(adb emu "sensor get acceleration" 2>&1 | head -2 | tr '\n' ' ' || true)
 echo "sent $LEVEL_GRAVITY for level; the emulator reports $SENSOR_LEVEL"
 sleep 4
 adb exec-out screencap -p > "$OUT/05-level.png"
