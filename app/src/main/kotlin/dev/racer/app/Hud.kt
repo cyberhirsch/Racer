@@ -162,7 +162,12 @@ private fun Racing(
             }
             Spacer(Modifier.width(8.dp))
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SmallButton("CENTRE", active = steering.neutral != 0.0, onClick = onRecentre)
+                SmallButton(
+                    "CENTRE",
+                    active = steering.neutral != 0.0,
+                    modifier = Modifier.reportRect("CENTRE"),
+                    onClick = onRecentre
+                )
                 SmallButton("INVERT", active = steering.invert, onClick = onInvert)
             }
         }
