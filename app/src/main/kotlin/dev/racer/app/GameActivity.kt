@@ -103,7 +103,12 @@ class GameActivity : ComponentActivity() {
                     onRetry = { beginRace { game.retry() } },
                     onNext = { beginRace { game.nextLevel() } },
                     onMenu = { game.toMenu() },
-                    onRecentre = { steering.calibrate() },
+                    // A toggle, not a one-way door: having adopted a hold,
+                    // there has to be a way back to level without restarting
+                    // the race.
+                    onRecentre = {
+                        if (steering.neutral != 0.0) steering.levelOut() else steering.calibrate()
+                    },
                     onInvert = { steering.invert = !steering.invert },
                     onPedals = { gas, braking ->
                         throttleWanted = gas.toDouble()
@@ -120,7 +125,11 @@ class GameActivity : ComponentActivity() {
         load()
         game.resetCamera()
         game.track?.let { renderer.setTrack(it) }
-        steering.calibrate()
+        // Every race starts from true level, not from however the phone is
+        // being held at that moment. CENTRE is still there for a player who
+        // wants to drive from somewhere that is not upright, and it lasts
+        // until the next race.
+        steering.levelOut()
         throttleWanted = 0.0
         brakeDown = false
         throttle = 0.0

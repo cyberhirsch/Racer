@@ -162,7 +162,7 @@ private fun Racing(
             }
             Spacer(Modifier.width(8.dp))
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SmallButton("CENTRE", onClick = onRecentre)
+                SmallButton("CENTRE", active = steering.neutral != 0.0, onClick = onRecentre)
                 SmallButton("INVERT", active = steering.invert, onClick = onInvert)
             }
         }
@@ -439,7 +439,8 @@ private fun Menu(game: Game, tiltAvailable: Boolean, onStart: (Int) -> Unit) {
                 Text("Your phone is the steering wheel.", color = Muted, fontSize = 13.sp,
                     modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
 
-                HowTo("⟲", "Steer", "Hold the phone in landscape and rotate it like a wheel. The horizon stays level.")
+                HowTo("⟲", "Steer", "Hold the phone in landscape and rotate it like a wheel. " +
+                    "Straight ahead is level, and the horizon stays level with it.")
                 HowTo("▶", "Gas", "Touch and hold anywhere on the right half.")
                 HowTo("◀", "Brake", "Touch and hold anywhere on the left half.")
                 HowTo("⛽", "Fuel is the clock",

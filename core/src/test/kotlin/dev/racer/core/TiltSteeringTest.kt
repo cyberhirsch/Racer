@@ -175,4 +175,50 @@ class TiltSteeringTest {
         repeat(400) { t.update(1.0 / 60.0, keyboardSteer = 1.0) }
         assertEquals(1.0, t.steer, 1e-3)
     }
+
+    /**
+     * A race starts level, whatever the phone was doing when it started.
+     *
+     * Nothing calibrates on the player's behalf any more: a phone picked up at
+     * an angle used to make that angle the new straight-ahead, so the same
+     * corner wanted a different wheel position from one race to the next and
+     * the horizon sat on a slant that never came off.
+     */
+    @Test
+    fun `a fresh wheel is centred on true level, not on how the phone is held`() {
+        val t = TiltSteering()
+        assertEquals("an uncalibrated wheel must be centred on level", 0.0, t.neutral, 0.0)
+
+        // Picked up already tilted twenty degrees: that is twenty degrees of
+        // steering, not a new centre.
+        val (gx, gy) = gravityFor(0.35)
+        t.onGravity(gx, gy, 0)
+        assertEquals(0.35, t.rollFromNeutral, 1e-9)
+        repeat(400) { t.update(1.0 / 60.0) }
+        assertTrue("holding it tilted should steer, not re-centre", t.steer > 0.2)
+    }
+
+    @Test
+    fun `held level, a fresh wheel is straight`() {
+        val t = TiltSteering()
+        val (gx, gy) = gravityFor(0.0)
+        t.onGravity(gx, gy, 0)
+        repeat(400) { t.update(1.0 / 60.0) }
+        assertEquals(0.0, t.steer, 1e-6)
+        assertEquals(0.0, t.viewRoll, 1e-9)
+    }
+
+    /** The escape hatch, and the way back from it. */
+    @Test
+    fun `centring adopts the current hold and levelling out undoes it`() {
+        val t = TiltSteering()
+        val (gx, gy) = gravityFor(0.4)
+        t.onGravity(gx, gy, 0)
+
+        t.calibrate()
+        assertEquals("centred here, this is now straight ahead", 0.0, t.rollFromNeutral, 1e-9)
+
+        t.levelOut()
+        assertEquals("levelling out puts the centre back to flat", 0.4, t.rollFromNeutral, 1e-9)
+    }
 }

@@ -17,8 +17,15 @@ import kotlin.math.PI
  * is tilted toward or away from the player, and it stays correct when the
  * screen rotates into landscape.
  *
- * Neutral is calibrated to wherever the player is actually holding the phone,
- * so nothing here assumes a particular grip.
+ * Neutral is true level — the attitude a spirit level would call flat — not
+ * wherever the phone happened to be when the race began. Starting from the
+ * player's grip meant the same corner needed a different wheel position from
+ * one race to the next, and a phone picked up at an angle put the horizon on a
+ * slant that never came off. Level is the one reference that is the same every
+ * time.
+ *
+ * [calibrate] is still there for a player who wants to drive lying down, but
+ * nothing calls it on their behalf.
  *
  * This class is deliberately free of Android imports so the maths can be
  * unit-tested on the JVM — see TiltSteeringTest.
@@ -34,7 +41,9 @@ class TiltSteering(
     var rawRoll = 0.0
         private set
 
-    /** Calibrated centre (rad). */
+    /**
+     * Where the wheel is centred (rad). Zero is level; [calibrate] moves it.
+     */
     var neutral = 0.0
         private set
 
@@ -78,9 +87,20 @@ class TiltSteering(
         rawRoll = atan2(sx, sy)
     }
 
-    /** Zero the steering at the phone's current attitude. */
+    /**
+     * Take the phone's current attitude as the new centre.
+     *
+     * For playing somewhere that is not upright — lying down, or in a seat
+     * that is not level. Nothing calls this automatically: a race always
+     * starts from [levelOut].
+     */
     fun calibrate() {
         neutral = rawRoll
+    }
+
+    /** Put the centre back to true level, where every race starts. */
+    fun levelOut() {
+        neutral = 0.0
     }
 
     private fun wrapPi(a: Double) = atan2(sin(a), cos(a))
