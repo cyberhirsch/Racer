@@ -167,6 +167,21 @@ echo "the HUD is drawing ${HUD_FUEL} kg; the game is at ${LOG_FUEL} kg"
 
 adb shell input motionevent UP "$TX" "$TY" || true
 
+# Press the centre of a rectangle the app reported for one of its controls.
+# Defined here, above the first user: it used to live further down, next to
+# the button checks, and the tilt section called it before the shell had read
+# the definition — so the wheel was silently never centred and both readings
+# came back pinned against the camera's roll limit.
+tap_rect() {
+    local rect="$1" name="$2"
+    [ -n "$rect" ] || { echo "no rectangle reported for $name"; return 1; }
+    local x1 y1 x2 y2
+    IFS=, read -r x1 y1 x2 y2 <<< "$rect"
+    TAP_X=$(( (x1 + x2) / 2 )); TAP_Y=$(( (y1 + y2) / 2 ))
+    echo "pressing $name at ${TAP_X},${TAP_Y} (the app put it at $rect)"
+    adb shell input tap "$TAP_X" "$TAP_Y"
+}
+
 # --- horizon check -----------------------------------------------------------
 # Roll the phone and confirm the drawn horizon rolls back the other way. This
 # is the only way to check the sign: it means nothing until it is on screen.
@@ -298,16 +313,6 @@ MENU_RECT=${MENU_RECT:-}
 echo "the app placed RESTART at [${RESTART_RECT:-unknown}] and MENU at [${MENU_RECT:-unknown}]"
 
 # Press the centre of a rectangle the app reported.
-tap_rect() {
-    local rect="$1" name="$2"
-    [ -n "$rect" ] || { echo "no rectangle reported for $name"; return 1; }
-    local x1 y1 x2 y2
-    IFS=, read -r x1 y1 x2 y2 <<< "$rect"
-    TAP_X=$(( (x1 + x2) / 2 )); TAP_Y=$(( (y1 + y2) / 2 ))
-    echo "pressing $name at ${TAP_X},${TAP_Y} (the app put it at $rect)"
-    adb shell input tap "$TAP_X" "$TAP_Y"
-}
-
 # --- the way out ------------------------------------------------------------
 # A race you have ruined has to be escapable without waiting for the tank to
 # empty. Both buttons are pressed for real, through the accessibility tree, and
