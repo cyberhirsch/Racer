@@ -33,6 +33,17 @@ class TiltSensor(context: Context, private val steering: TiltSteering) : SensorE
     private var hasFiltered = false
     private var lastLoggedRotation = -1
 
+    /**
+     * The display rotation the steering is currently working in.
+     *
+     * Reported alongside the race heartbeat, because it decides which way
+     * level points and nothing downstream can be checked without it — and
+     * because logging it once, on the first sensor event, leaves a stale
+     * number behind the moment the display turns.
+     */
+    @Volatile var lastRotation = 0
+        private set
+
     fun start() {
         val sensor = gravity ?: accelerometer ?: return
         sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
@@ -58,6 +69,7 @@ class TiltSensor(context: Context, private val steering: TiltSteering) : SensorE
         }
 
         val rotation = displayRotationDegrees()
+        lastRotation = rotation
         if (rotation != lastLoggedRotation) {
             lastLoggedRotation = rotation
             // The one number that decides which way "level" points. Sensor

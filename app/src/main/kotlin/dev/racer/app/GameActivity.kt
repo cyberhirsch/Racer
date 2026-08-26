@@ -240,6 +240,7 @@ class GameActivity : ComponentActivity() {
                         "fuel=${"%.2f".format(game.vehicle.fuel)}kg " +
                         "cp=${game.nextCheckpoint}/${game.checkpointTotal} " +
                         "throttle=${"%.2f".format(throttle)} steer=${"%.2f".format(steering.steer)} " +
+                        "rot=${tiltSensor.lastRotation} " +
                         "phoneRoll=${"%.1f".format(Math.toDegrees(steering.rollFromNeutral))} " +
                         "viewRoll=${"%.1f".format(Math.toDegrees(steering.viewRoll))}"
                 )

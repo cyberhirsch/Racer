@@ -186,7 +186,14 @@ ROLL_DEG=25
 # app calibrated its neutral at the start of every race and quietly absorbed
 # the ninety degrees. Now that a race starts at true level, the offset has
 # nowhere to hide, and the injection has to be right.
-DISPLAY_ROTATION=$(adb logcat -d | grep -o "display rotation=[0-9]*" | tail -1 | cut -d= -f2 || true)
+# From the heartbeat, which carries the rotation in force at that moment, and
+# from the race log as well as the live buffer. Taking it from a line logged
+# once at startup gave the wrong answer: the app read 180 degrees from a vector
+# built for a display that had since turned.
+ROT_LOG=$(cat "$OUT/logcat-race.txt" 2>/dev/null; adb logcat -d 2>/dev/null || true)
+DISPLAY_ROTATION=$(echo "$ROT_LOG" | grep -o "rot=[0-9]*" | tail -1 | cut -d= -f2 || true)
+[ -n "$DISPLAY_ROTATION" ] || DISPLAY_ROTATION=$(echo "$ROT_LOG" \
+    | grep -o "display rotation=[0-9]*" | tail -1 | cut -d= -f2 || true)
 DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
 echo "the display is rotated ${DISPLAY_ROTATION} degrees from the device's natural orientation"
 
@@ -349,6 +356,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE audio: $(grep -c "engine audio started" "$OUT/logcat.txt") engine synth start(s)"
     echo "SMOKE frame rate: $(grep -o "render [0-9.]* fps" "$OUT/logcat.txt" | tail -4 | tr '\n' ' ' || true)"
     echo "SMOKE tilt: level -> app read ${APP_ROLL_LEVEL} deg, renderer drew ${DRAW_ROLL_LEVEL} deg"
+    echo "SMOKE the display was rotated ${DISPLAY_ROTATION} deg; gravity was injected in those axes"
     echo "SMOKE horizon in frame (informational; barriers and fog make this noisy):"
     echo "SMOKE   rolled:  $HORIZON_ROLLED"
     echo "SMOKE   upright: $HORIZON_LEVEL"
