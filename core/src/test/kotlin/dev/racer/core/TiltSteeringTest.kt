@@ -161,32 +161,73 @@ class TiltSteeringTest {
     }
 
     /**
-     * How much the camera has to roll back depends on how much the picture on
-     * the glass actually turned, which depends on the hold: all of it when the
-     * phone is upright, none of it when it is flat.
+     * The horizon has to be levelled against how far the *picture* turned, not
+     * how far the phone turned. They are only the same angle when the phone is
+     * bolt upright, and the difference is not small: held twenty degrees off
+     * flat, a ten degree turn of the phone swings the horizon twenty-seven
+     * degrees across the screen, because a screen nearly parallel to the
+     * ground sweeps the horizon across itself fast.
+     *
+     * Cancelling the phone's angle instead left most of that on the screen, so
+     * the horizon still swung with the phone — which from the driving seat is
+     * indistinguishable from cancelling it backwards, and was reported as an
+     * inverted horizon.
      */
     @Test
-    fun `the horizon is cancelled in proportion to how upright the phone is`() {
-        fun rollAt(pitchOffFlatDeg: Int): Double {
-            val t = TiltSteering()
-            val (gx, gy, gz) = gravityFor(0.35, (90 - pitchOffFlatDeg) * PI / 180)
-            t.onGravity(gx, gy, gz, 0)
-            return t.viewRoll
+    fun `the horizon is levelled by however far the picture turned`() {
+        for (pitchOffFlat in listOf(90, 60, 45, 30, 20)) {
+            for (rollDeg in listOf(-20, -10, 10, 20)) {
+                val t = TiltSteering()
+                val roll = rollDeg * PI / 180
+                val (gx, gy, gz) = gravityFor(roll, (90 - pitchOffFlat) * PI / 180)
+                t.onGravity(gx, gy, gz, 0)
+
+                // What the horizon actually does on the glass: the angle
+                // gravity makes inside the plane of the screen.
+                val onGlass = kotlin.math.atan2(gx, gy)
+                assertEquals(
+                    "held $pitchOffFlat deg off flat with $rollDeg deg of wheel, the view " +
+                        "rolled ${t.viewRoll * 180 / PI} where the picture turned " +
+                        "${onGlass * 180 / PI}",
+                    -onGlass, t.viewRoll, 1e-6
+                )
+            }
         }
-        val upright = rollAt(90)
-        val halfway = rollAt(45)
-        val flat = rollAt(0)
-        println("view roll at 20 deg of wheel: upright %.3f, half %.3f, flat %.3f"
-            .format(upright, halfway, flat))
-        assertEquals("upright, the whole rotation has to be cancelled", -0.35, upright, 1e-6)
-        // Flatter means less of the turn shows up as rotation on the glass,
-        // so less of it has to be taken back out. It does not reach nothing
-        // here: a phone laid flat and then turned twenty degrees is not
-        // actually flat any more, which is why the flat case worth asserting
-        // to zero is the one above, with the phone genuinely level.
-        assertTrue("laying it flatter should cancel less", halfway > upright)
-        assertTrue("flatter still should cancel less again", flat > halfway)
-        assertTrue("it should still cancel the right way round", flat < 0)
+        println("the horizon is cancelled exactly, from ten degrees off flat to upright")
+    }
+
+    /**
+     * Held flat there is no gravity in the plane of the screen, so the angle to
+     * cancel is not defined — and rocking a nearly flat phone barely turns the
+     * picture in the player's eyes anyway. Cancelling noise there threw the
+     * horizon around and left it on its side.
+     *
+     * The band this fades over has to be narrow. Twenty degrees off flat is a
+     * normal way to hold a phone, and the previous attempt at this faded most
+     * of the correction away by then, which is what left the horizon swinging
+     * with the phone.
+     */
+    @Test
+    fun `the horizon correction fades out only when the phone is nearly flat`() {
+        fun correctionAt(pitchOffFlatDeg: Double): Double {
+            val t = TiltSteering()
+            val (gx, gy, gz) = gravityFor(10 * PI / 180, (90 - pitchOffFlatDeg) * PI / 180)
+            t.onGravity(gx, gy, gz, 0)
+            return t.viewRoll / -kotlin.math.atan2(gx, gy)
+        }
+        val holds = listOf(45.0, 20.0, 10.0, 5.0, 2.0, 0.5)
+        val applied = holds.map { correctionAt(it) }
+        println(holds.zip(applied).joinToString { "%.1f deg off flat -> %.2f".format(it.first, it.second) })
+
+        assertEquals("a normal hold must get the whole correction", 1.0, correctionAt(45.0), 1e-9)
+        assertEquals("so must twenty degrees off flat", 1.0, correctionAt(20.0), 1e-9)
+        for (i in 1 until applied.size) {
+            assertTrue(
+                "the correction must not grow as the phone is laid flatter: $applied",
+                applied[i] <= applied[i - 1] + 1e-9
+            )
+        }
+        assertTrue("flat on the table, none of it should be applied", applied.last() < 0.05)
     }
 
     @Test
