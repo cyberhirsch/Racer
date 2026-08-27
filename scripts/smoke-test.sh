@@ -224,12 +224,19 @@ sx, sy = 9.81 * math.sin(roll), 9.81 * math.cos(roll)
 # TiltSteering rotates device axes by -a to get these, so undo that.
 gx = sx * math.cos(a) - sy * math.sin(a)
 gy = sx * math.sin(a) + sy * math.cos(a)
-# Not negated. The app receives the vector exactly as the console holds it:
-# with the console confirming 9.81:-0:0 and the app's own attitude line
-# reporting 180 degrees at that moment, the arithmetic only closes if gravity
-# arrived unchanged. An earlier round concluded the opposite from a reading
-# taken between races, when the roll was last logged some races ago.
-print(f"{gx:.3f}:{gy:.3f}:0")
+# Turned round. The emulator presents the in-plane part of an injected vector
+# rotated by 180 degrees before the app sees it, and the evidence for that is
+# now unambiguous: injecting a level vector, the app reads exactly 0 degrees of
+# roll, and injecting 25 degrees it reads exactly -25.
+#
+# Four earlier rounds argued about this sign and settled on "unchanged" from a
+# reading of 180 degrees for a level vector. That reading was an artefact of
+# the app's own maths, not of the emulator: the roll was an atan2 of the two
+# in-screen components, and atan2(0, -9.81) is 180 for a vector that has no
+# roll in it at all. With the roll now measured against the whole gravity
+# vector, level reads level, and what is left over is a real property of the
+# emulator rather than a quantity that was never measuring the right thing.
+print(f"{-gx:.3f}:{-gy:.3f}:0")
 GRAV
 }
 
@@ -478,49 +485,46 @@ import sys
 
 injected, app, drew, level, appLevel = (float(v) for v in sys.argv[1:6])
 
+# The whole chain, in absolute terms, which this job could not do until now.
+#
+# It used to measure only the *change* between two readings, because the app
+# reported 180 degrees for a vector built to be level and every reading was
+# saturated against the camera's roll limit. That was the app's own maths, not
+# the emulator: the roll was an atan2 of the two in-screen gravity components,
+# which is 180 for a level vector that has no roll in it at all. Measured
+# against the whole gravity vector, level reads level, nothing saturates, and
+# each link can be checked for what it actually is.
 
-def turn(a, b):
-    """How far b is from a, as a signed angle in (-180, 180]."""
-    return (b - a + 180) % 360 - 180
+print(f"held level: wheel {appLevel:.1f} deg, horizon drawn {level:.1f} deg")
+print(f"rolled {injected:.0f} deg: wheel {app:.1f} deg, horizon drawn {drew:.1f} deg")
 
-
-# Everything here is a *change*, measured from the reading taken with the
-# wheel centred. Absolutes are meaningless on this device: the emulator puts
-# injected acceleration through its own idea of orientation and reports 180
-# degrees for a vector built to be level. What it tracks faithfully is the
-# change. TiltSteeringTest pins the level-is-straight-ahead behaviour, and on
-# a real phone it is a question for the person holding it.
-sensorMoved = turn(appLevel, app)
-cameraMoved = turn(level, drew)
-print(f"(centred first; level read {appLevel:.1f} deg, which is the emulator's "
-      f"frame, not a phone's)")
-print(f"tilt chain: injected {injected:.0f} deg -> sensor moved {sensorMoved:.1f} "
-      f"-> camera moved {cameraMoved:.1f} (upright drawn {level:.1f}, rolled {drew:.1f})")
-
-if abs(sensorMoved - injected) > 6:
-    print(f"FAIL: a {injected:.0f} deg tilt moved the app's reading by "
-          f"{sensorMoved:.1f} deg.")
+if abs(appLevel) > 5:
+    print(f"FAIL: held level the wheel reads {appLevel:.1f} deg, not straight ahead.")
     sys.exit(1)
 
-# Not asserted: which way the camera rolls, and by how much.
-#
-# The emulator reports 180 degrees for a vector built to be level, and the
-# camera's roll is clamped at 75.1 degrees, so on this device the view sits
-# pinned against that limit before anything is injected and every reading of it
-# is saturated. Centring the wheel first would lift it off the limit; six
-# rounds went into trying to make that press take, and the app never logged
-# having received it. A check that cannot tell a saturated reading from a wrong
-# one is not worth a red build — the same conclusion the race buttons reached.
-#
-# What is asserted above is the part this job can measure: a real sensor change
-# reaches the app, through the display-rotation mapping, at the right size.
-# That the camera rolls against the phone, and never past its limit, is pinned
-# by CameraRollTest in :core, which puts the world horizon through the actual
-# view matrix.
-print(f"camera roll (not asserted; saturated at this device's baseline): "
-      f"upright {level:.1f}, rolled {drew:.1f}")
+if abs(level) > 5:
+    print(f"FAIL: held level the renderer drew a {level:.1f} deg horizon roll.")
+    sys.exit(1)
 
-print("OK: a real tilt reaches the app, at the right size, through the display rotation.")
+# Size and sign together. A mirrored wheel is the bug that shipped once and was
+# reported from a real device, and a check on magnitude alone would pass it.
+if abs(app - injected) > 6:
+    print(f"FAIL: a {injected:.0f} deg roll of the phone reads as {app:.1f} deg "
+          f"of wheel.")
+    sys.exit(1)
+
+# The camera must roll AGAINST the phone. Turning the phone clockwise by 25
+# degrees has to roll the view 25 degrees anticlockwise, or the horizon tips
+# twice as far instead of standing still — which is exactly what shipped, and
+# was reported from a real device.
+if abs(drew + injected) > 8:
+    print(f"FAIL: a {injected:.0f} deg phone roll drew a {drew:.1f} deg camera "
+          f"roll; it should be about {-injected:.0f}. Rolling the camera the same "
+          f"way as the phone doubles the tilt instead of cancelling it.")
+    sys.exit(1)
+
+print("OK: level reads level, and a real tilt reaches the renderer with the "
+      "camera rolling against it.")
 TILT
 
 [ "$FAILED" -eq 0 ] || exit 1
