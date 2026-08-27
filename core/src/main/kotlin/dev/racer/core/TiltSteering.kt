@@ -1,6 +1,9 @@
 package dev.racer.core
 
+import kotlin.math.asin
 import kotlin.math.atan2
+import kotlin.math.hypot
+import kotlin.math.sqrt
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sign
@@ -63,7 +66,7 @@ class TiltSteering(
      * @param displayRotationDegrees the display's rotation relative to the
      *   device's natural orientation: 0, 90, 180 or 270.
      */
-    fun onGravity(gx: Double, gy: Double, displayRotationDegrees: Int) {
+    fun onGravity(gx: Double, gy: Double, gz: Double, displayRotationDegrees: Int) {
         hasSensor = true
         // Rotate the in-plane gravity components into the *screen's* frame, so
         // landscape behaves exactly like portrait.
@@ -72,20 +75,41 @@ class TiltSteering(
         val sx = gx * ca + gy * sa
         val sy = -gx * sa + gy * ca
 
-        // Android's gravity vector points *away* from the ground: held upright
-        // in its natural orientation a phone reads about (0, +9.81, 0). So in
-        // the screen frame it points "up the screen", and the angle between it
-        // and screen-up is the wheel angle.
+        val magnitude = sqrt(gx * gx + gy * gy + gz * gz)
+        if (magnitude < 1e-3) return
+
+        // How far the wheel is turned: the angle by which the screen's own
+        // left-right axis has dipped away from horizontal.
         //
-        // Rolling the phone clockwise (as the player sees it) moves gravity to
-        // (+sin, +cos) in screen coordinates, so this reads positive — and
-        // positive steer turns the car right, which is what a wheel turned
-        // clockwise should do. The sign here was originally the other way
-        // round; the unit test could not catch it, because it checked the code
-        // against the same assumption the code was built on. See
-        // TiltSteeringTest and scripts/smoke-test.sh.
-        rawRoll = atan2(sx, sy)
+        // This used to be atan2 of the two in-screen components, which is the
+        // rotation of the picture on the glass — and which is only the same
+        // thing as the wheel angle when the phone is held bolt upright. Held
+        // at any normal angle it reads far more than the phone has actually
+        // moved, because it divides by a component that shrinks as the phone
+        // is tilted back: at twenty degrees off flat a five degree twitch came
+        // out as fourteen, full lock arrived after twelve degrees of real
+        // movement, and laid flat on a table it read ninety degrees of
+        // steering off a vector that has no rotation in it at all. Steering
+        // and horizon were both unusable, and no amount of calibrating the
+        // neutral could help, because the fault is in the gain and not the
+        // offset.
+        //
+        // Measured against the whole gravity vector instead, the answer is the
+        // angle the phone has actually been turned through, at every hold
+        // angle from flat to vertical. Same sign as before: the wheel still
+        // turns the way it did.
+        rawRoll = asin((sx / magnitude).coerceIn(-1.0, 1.0))
+
+        // How much of gravity lies in the plane of the screen — one when the
+        // phone is upright, nought when it is flat. See [viewRoll].
+        uprightness = (hypot(sx, sy) / magnitude).coerceIn(0.0, 1.0)
     }
+
+    /**
+     * How upright the phone is being held, from 0 (flat) to 1 (vertical).
+     */
+    var uprightness = 0.0
+        private set
 
     /**
      * Take the phone's current attitude as the new centre.
@@ -141,10 +165,18 @@ class TiltSteering(
      * [invert], which is a steering preference — the horizon is not a matter
      * of taste.
      *
-     * The sign here is the one thing in the file that cannot be derived from
-     * the maths alone: it depends on which way round the rendered frame sits
-     * on the glass. It was wrong in both directions before settling here, each
+     * Faded out by [uprightness], because how much the picture on the glass
+     * turns depends on how the phone is being held. Held upright and turned
+     * like a wheel, the image rotates by the full angle and the view has to
+     * cancel all of it. Laid flat on a table and rocked side to side, the
+     * image does not rotate at all and there is nothing to cancel — and the
+     * angle to cancel by is not even well defined, which is what used to put
+     * the horizon on its side and leave it there.
+     *
+     * The sign is the one thing in the file that cannot be derived from the
+     * maths alone: it depends on which way round the rendered frame sits on
+     * the glass. It was wrong in both directions before settling here, each
      * time corrected against what the phone actually showed.
      */
-    val viewRoll: Double get() = -rollFromNeutral
+    val viewRoll: Double get() = -rollFromNeutral * uprightness
 }

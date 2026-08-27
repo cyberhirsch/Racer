@@ -30,6 +30,7 @@ class TiltSensor(context: Context, private val steering: TiltSteering) : SensorE
     // Low-pass state, only used on the accelerometer fallback path.
     private var filteredX = 0f
     private var filteredY = 0f
+    private var filteredZ = 0f
     private var hasFiltered = false
     private var lastLoggedRotation = -1
 
@@ -56,16 +57,23 @@ class TiltSensor(context: Context, private val steering: TiltSteering) : SensorE
     override fun onSensorChanged(event: SensorEvent) {
         var x = event.values[0]
         var y = event.values[1]
+        // The axis out of the screen, which used to be dropped. Without it
+        // there is no way to tell a phone lying flat from one held upright,
+        // and the steering angle cannot be measured against the whole gravity
+        // vector — which is what makes it read the same at every hold angle.
+        var z = event.values[2]
 
         if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
             // Separate gravity from movement: the steering only cares about
             // which way is down, not about the car's bumps and the player's hands.
             val a = 0.15f
-            if (!hasFiltered) { filteredX = x; filteredY = y; hasFiltered = true }
+            if (!hasFiltered) { filteredX = x; filteredY = y; filteredZ = z; hasFiltered = true }
             filteredX += (x - filteredX) * a
             filteredY += (y - filteredY) * a
+            filteredZ += (z - filteredZ) * a
             x = filteredX
             y = filteredY
+            z = filteredZ
         }
 
         val rotation = displayRotationDegrees()
@@ -78,7 +86,7 @@ class TiltSensor(context: Context, private val steering: TiltSteering) : SensorE
             // without knowing it.
             android.util.Log.i("Racer", "display rotation=$rotation")
         }
-        steering.onGravity(x.toDouble(), y.toDouble(), rotation)
+        steering.onGravity(x.toDouble(), y.toDouble(), z.toDouble(), rotation)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

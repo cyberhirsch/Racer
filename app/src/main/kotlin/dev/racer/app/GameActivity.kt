@@ -242,6 +242,7 @@ class GameActivity : ComponentActivity() {
             TAG,
             "attitude rot=${tiltSensor.lastRotation} " +
                 "raw=${"%.1f".format(Math.toDegrees(steering.rawRoll))} " +
+                "upright=${"%.2f".format(steering.uprightness)} " +
                 "neutral=${"%.1f".format(Math.toDegrees(steering.neutral))} " +
                 "phoneRoll=${"%.1f".format(Math.toDegrees(steering.rollFromNeutral))} " +
                 "viewRoll=${"%.1f".format(Math.toDegrees(steering.viewRoll))} " +

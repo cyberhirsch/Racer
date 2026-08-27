@@ -38,21 +38,44 @@ class TiltSteeringTest {
      * gravity out of the screen plane, scaling the in-plane part without
      * turning it.
      */
-    private fun gravityFor(roll: Double, pitch: Double = 0.0): Pair<Double, Double> {
-        val inPlane = cos(pitch)
-        return Pair(sin(roll) * 9.81 * inPlane, cos(roll) * 9.81 * inPlane)
+    private fun gravityFor(
+        roll: Double,
+        pitch: Double = 0.0,
+        displayRotation: Int = 0
+    ): Triple<Double, Double, Double> {
+        val g = 9.81
+        // First in the screen's own frame: right, up, and out of the glass.
+        //
+        // The sideways component does *not* shrink with pitch — the screen's
+        // left-right axis stays horizontal however far the phone is tilted
+        // back. The old version of this helper scaled it along with the
+        // upward one, which made the maths look right at every hold angle
+        // when in fact it was right at only one, and is why this file could
+        // not fail on the bug that shipped.
+        val right = sin(roll) * g
+        val up = cos(pitch) * cos(roll) * g
+        val outOfScreen = sin(pitch) * cos(roll) * g
+
+        // Then back into device axes, which is what the sensor reports and
+        // what the steering is given. Skipping this step and passing screen
+        // coordinates straight in used to pass anyway, because the test
+        // calibrated its neutral in the same orientation and a constant
+        // offset is exactly what calibration hides.
+        val a = displayRotation * PI / 180.0
+        val ca = cos(a); val sa = sin(a)
+        return Triple(right * ca - up * sa, right * sa + up * ca, outOfScreen)
     }
 
     private fun recovered(roll: Double, displayRotation: Int, pitch: Double = 0.0): Double {
         val t = TiltSteering()
         // Calibrate at the attitude the player is holding — exactly what the
         // game does when the countdown starts.
-        val (nx, ny) = gravityFor(0.0)
-        t.onGravity(nx, ny, displayRotation)
+        val (nx, ny, nxnyz) = gravityFor(0.0, displayRotation = displayRotation)
+        t.onGravity(nx, ny, nxnyz, displayRotation)
         t.calibrate()
 
-        val (gx, gy) = gravityFor(roll, pitch)
-        t.onGravity(gx, gy, displayRotation)
+        val (gx, gy, gxgyz) = gravityFor(roll, pitch, displayRotation)
+        t.onGravity(gx, gy, gxgyz, displayRotation)
         return t.rollFromNeutral
     }
 
@@ -91,21 +114,96 @@ class TiltSteeringTest {
         }
     }
 
+    /**
+     * The bug that shipped, stated as the thing it broke.
+     *
+     * Nobody plays with the phone standing bolt upright; it is held somewhere
+     * between flat and vertical. The steering has to read the same angle
+     * whatever that hold is, or it is a different game every time you shift in
+     * your seat. It did not: it divided by a component that shrinks as the
+     * phone is tilted back, so the gain climbed without limit as the hold
+     * approached flat — at twenty degrees off flat a five degree twitch read
+     * as fourteen, and at ten degrees off flat it read twenty-seven.
+     */
+    @Test
+    fun `reads the same steering angle at every hold angle`() {
+        for (pitchDeg in listOf(2, 5, 10, 20, 45, 70, 90)) {
+            for (rollDeg in listOf(-30, -10, -5, 5, 10, 30)) {
+                val t = TiltSteering()
+                val (gx, gy, gz) = gravityFor(
+                    rollDeg * PI / 180,
+                    // Held `pitchDeg` off flat, so pitch away from vertical.
+                    (90 - pitchDeg) * PI / 180
+                )
+                t.onGravity(gx, gy, gz, 0)
+                val got = t.rollFromNeutral * 180 / PI
+                assertEquals(
+                    "held $pitchDeg deg off flat, a $rollDeg deg roll read as $got",
+                    rollDeg.toDouble(), got, 1e-6
+                )
+            }
+        }
+        println("the wheel reads true from two degrees off flat to bolt upright")
+    }
+
+    /**
+     * Laid flat there is no rotation in the gravity vector to read at all, and
+     * the old maths read ninety degrees off it: full lock, permanently, with
+     * the horizon on its side to match.
+     */
+    @Test
+    fun `laid flat on a table the wheel is straight and the horizon is level`() {
+        val t = TiltSteering()
+        t.onGravity(0.0, 0.0, 9.81, 0)
+        repeat(400) { t.update(1.0 / 60.0) }
+        assertEquals("a phone lying flat is not steering", 0.0, t.steer, 1e-6)
+        assertEquals("a phone lying flat has no horizon to cancel", 0.0, t.viewRoll, 1e-9)
+    }
+
+    /**
+     * How much the camera has to roll back depends on how much the picture on
+     * the glass actually turned, which depends on the hold: all of it when the
+     * phone is upright, none of it when it is flat.
+     */
+    @Test
+    fun `the horizon is cancelled in proportion to how upright the phone is`() {
+        fun rollAt(pitchOffFlatDeg: Int): Double {
+            val t = TiltSteering()
+            val (gx, gy, gz) = gravityFor(0.35, (90 - pitchOffFlatDeg) * PI / 180)
+            t.onGravity(gx, gy, gz, 0)
+            return t.viewRoll
+        }
+        val upright = rollAt(90)
+        val halfway = rollAt(45)
+        val flat = rollAt(0)
+        println("view roll at 20 deg of wheel: upright %.3f, half %.3f, flat %.3f"
+            .format(upright, halfway, flat))
+        assertEquals("upright, the whole rotation has to be cancelled", -0.35, upright, 1e-6)
+        // Flatter means less of the turn shows up as rotation on the glass,
+        // so less of it has to be taken back out. It does not reach nothing
+        // here: a phone laid flat and then turned twenty degrees is not
+        // actually flat any more, which is why the flat case worth asserting
+        // to zero is the one above, with the phone genuinely level.
+        assertTrue("laying it flatter should cancel less", halfway > upright)
+        assertTrue("flatter still should cancel less again", flat > halfway)
+        assertTrue("it should still cancel the right way round", flat < 0)
+    }
+
     @Test
     fun `applies a deadzone and saturates at full lock`() {
         val t = TiltSteering()
-        t.onGravity(0.0, 9.81, 0)
+        t.onGravity(0.0, 9.81, 0.0, 0)
         t.calibrate()
 
         // Inside the deadzone: no steering at all.
-        val (sx, sy) = gravityFor(0.02)
-        t.onGravity(sx, sy, 0)
+        val (sx, sy, sxsyz) = gravityFor(0.02)
+        t.onGravity(sx, sy, sxsyz, 0)
         repeat(200) { t.update(1.0 / 60.0) }
         assertEquals("deadzone leaked", 0.0, t.steer, 1e-6)
 
         // Well past full lock: saturated, not beyond 1.
-        val (bx, by) = gravityFor(1.2)
-        t.onGravity(bx, by, 0)
+        val (bx, by, bxbyz) = gravityFor(1.2)
+        t.onGravity(bx, by, bxbyz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
         assertEquals("did not reach full lock", 1.0, t.steer, 1e-3)
     }
@@ -118,17 +216,17 @@ class TiltSteeringTest {
     @Test
     fun `rolling the phone clockwise steers right`() {
         val t = TiltSteering()
-        val (nx, ny) = gravityFor(0.0)
-        t.onGravity(nx, ny, 0); t.calibrate()
+        val (nx, ny, nxnyz) = gravityFor(0.0)
+        t.onGravity(nx, ny, nxnyz, 0); t.calibrate()
 
-        val (cx, cy) = gravityFor(0.35)          // 20 degrees clockwise
-        t.onGravity(cx, cy, 0)
+        val (cx, cy, cxcyz) = gravityFor(0.35)          // 20 degrees clockwise
+        t.onGravity(cx, cy, cxcyz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
         println("clockwise 20 deg -> steer %+.3f".format(t.steer))
         assertTrue("clockwise should steer right, got ${t.steer}", t.steer > 0.1)
 
-        val (ax, ay) = gravityFor(-0.35)         // 20 degrees anticlockwise
-        t.onGravity(ax, ay, 0)
+        val (ax, ay, axayz) = gravityFor(-0.35)         // 20 degrees anticlockwise
+        t.onGravity(ax, ay, axayz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
         println("anticlockwise 20 deg -> steer %+.3f".format(t.steer))
         assertTrue("anticlockwise should steer left, got ${t.steer}", t.steer < -0.1)
@@ -142,11 +240,11 @@ class TiltSteeringTest {
     @Test
     fun `the view roll opposes the phone and ignores the invert setting`() {
         val t = TiltSteering()
-        val (nx, ny) = gravityFor(0.0)
-        t.onGravity(nx, ny, 0); t.calibrate()
+        val (nx, ny, nxnyz) = gravityFor(0.0)
+        t.onGravity(nx, ny, nxnyz, 0); t.calibrate()
 
-        val (gx, gy) = gravityFor(0.4)
-        t.onGravity(gx, gy, 0)
+        val (gx, gy, gxgyz) = gravityFor(0.4)
+        t.onGravity(gx, gy, gxgyz, 0)
         assertEquals(0.4, t.rollFromNeutral, 1e-9)
         assertEquals("the view must roll against the phone, not with it",
             -0.4, t.viewRoll, 1e-9)
@@ -159,9 +257,9 @@ class TiltSteeringTest {
     @Test
     fun `invert flips the steering direction`() {
         val t = TiltSteering()
-        t.onGravity(0.0, 9.81, 0); t.calibrate()
-        val (gx, gy) = gravityFor(0.4)
-        t.onGravity(gx, gy, 0)
+        t.onGravity(0.0, 9.81, 0.0, 0); t.calibrate()
+        val (gx, gy, gxgyz) = gravityFor(0.4)
+        t.onGravity(gx, gy, gxgyz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
         val normal = t.steer
         t.invert = true
@@ -191,8 +289,8 @@ class TiltSteeringTest {
 
         // Picked up already tilted twenty degrees: that is twenty degrees of
         // steering, not a new centre.
-        val (gx, gy) = gravityFor(0.35)
-        t.onGravity(gx, gy, 0)
+        val (gx, gy, gxgyz) = gravityFor(0.35)
+        t.onGravity(gx, gy, gxgyz, 0)
         assertEquals(0.35, t.rollFromNeutral, 1e-9)
         repeat(400) { t.update(1.0 / 60.0) }
         assertTrue("holding it tilted should steer, not re-centre", t.steer > 0.2)
@@ -201,8 +299,8 @@ class TiltSteeringTest {
     @Test
     fun `held level, a fresh wheel is straight`() {
         val t = TiltSteering()
-        val (gx, gy) = gravityFor(0.0)
-        t.onGravity(gx, gy, 0)
+        val (gx, gy, gxgyz) = gravityFor(0.0)
+        t.onGravity(gx, gy, gxgyz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
         assertEquals(0.0, t.steer, 1e-6)
         assertEquals(0.0, t.viewRoll, 1e-9)
@@ -212,8 +310,8 @@ class TiltSteeringTest {
     @Test
     fun `centring adopts the current hold and levelling out undoes it`() {
         val t = TiltSteering()
-        val (gx, gy) = gravityFor(0.4)
-        t.onGravity(gx, gy, 0)
+        val (gx, gy, gxgyz) = gravityFor(0.4)
+        t.onGravity(gx, gy, gxgyz, 0)
 
         t.calibrate()
         assertEquals("centred here, this is now straight ahead", 0.0, t.rollFromNeutral, 1e-9)
