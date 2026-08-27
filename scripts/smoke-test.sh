@@ -236,6 +236,10 @@ print(f"{gx:.3f}:{gy:.3f}:0")
 GRAV
 }
 
+latest_rotation() {
+    adb logcat -d 2>/dev/null | grep -o "attitude rot=[0-9]*" | tail -1 | cut -d= -f2 || true
+}
+
 # Prove the CENTRE button works while we are here. Nothing below depends on
 # it: a race starts from true level, and level is what the readings are taken
 # against.
@@ -247,44 +251,33 @@ CENTRE_RECT=$( { cat "$OUT/logcat-race.txt" 2>/dev/null; adb logcat -d 2>/dev/nu
 if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
 if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
 
-# Inject the tilt, and keep injecting until the display stops moving.
+# Inject the tilt.
 #
-# The rotation is not something that can be read and then relied on: the
-# activity is sensorLandscape, so it follows gravity, and gravity here is
-# whatever this script has just injected. Build a screen-frame vector for
-# rotation 90, and if Android decides that attitude is rotation 270, the
-# display turns and the app undoes a rotation the vector was never built for —
-# which negates every angle and reads exactly like a sign convention. Five
-# rounds went into arguing about that sign.
+# The rotation this is built for is a guess, and deliberately treated as one.
+# The activity is sensorLandscape, so the display follows gravity, and gravity
+# here is whatever this script has just injected: build a screen-frame vector
+# for rotation 90 and Android may decide that attitude is rotation 270 and turn
+# the display, several seconds later, on an emulator drawing two frames a
+# second. Iterating to a fixed point was tried and does not converge inside any
+# sensible wait.
 #
-# So this looks for the fixed point instead: build for whatever rotation is in
-# force, inject, and see where the display ended up. When it ends up where it
-# started, the two sides agree and the reading means something.
-latest_rotation() {
-    adb logcat -d 2>/dev/null | grep -o "attitude rot=[0-9]*" | tail -1 | cut -d= -f2 || true
-}
-
-for attempt in 1 2 3; do
-    DISPLAY_ROTATION=$(latest_rotation)
-    DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
-    GRAVITY=$(device_gravity "$ROLL_DEG")
-    echo "attempt $attempt: display at ${DISPLAY_ROTATION} deg, injecting $GRAVITY" \
-        "(a ${ROLL_DEG} degree clockwise roll)"
-    # One argument, not five. A vector for a landscape display often starts
-    # with a minus sign, and adb takes such an argument for one of its own
-    # flags — which is why two rounds of injecting gravity changed nothing at
-    # all and looked like the emulator using the opposite sign convention. It
-    # does not: asked what it holds, it reports exactly what it is given.
-    adb emu "sensor set acceleration $GRAVITY" || echo "could not drive the emulator's sensor"
-    sleep 4
-    SETTLED_ROTATION=$(latest_rotation)
-    SETTLED_ROTATION=${SETTLED_ROTATION:-$DISPLAY_ROTATION}
-    # An if, not a && — under set -e a bare `[ ... ] && break` whose test
-    # fails ends the whole script, which is the single most expensive mistake
-    # available in this file.
-    if [ "$SETTLED_ROTATION" = "$DISPLAY_ROTATION" ]; then break; fi
-    echo "the display turned to ${SETTLED_ROTATION} under that vector; building for it instead"
-done
+# So the reading is checked against the rotation the app *reports* at the
+# moment it was taken, rather than against the one this guessed at. What that
+# gives up is the display-rotation mapping itself, which TiltSteeringTest
+# already pins in all four rotations. What it keeps is everything else, and in
+# particular the sign — a mirrored wheel is the bug that shipped once and was
+# reported from a real device.
+DISPLAY_ROTATION=$(latest_rotation)
+DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
+GRAVITY=$(device_gravity "$ROLL_DEG")
+echo "display at ${DISPLAY_ROTATION} deg, injecting $GRAVITY (a ${ROLL_DEG} degree roll)"
+# One argument, not five. A vector for a landscape display often starts with a
+# minus sign, and adb takes such an argument for one of its own flags — which
+# is why two rounds of injecting gravity changed nothing at all and looked like
+# the emulator using the opposite sign convention. It does not: asked what it
+# holds, it reports exactly what it is given.
+adb emu "sensor set acceleration $GRAVITY" || echo "could not drive the emulator's sensor"
+sleep 5
 
 # Level, for the same rotation the tilt ended up agreeing on.
 device_gravity 0 > /tmp/gravity-level.txt
@@ -309,12 +302,11 @@ APP_ROLL=$(echo "$ATTITUDE_ROLLED" | grep -o "phoneRoll=[-0-9.]*" | cut -d= -f2 
 APP_ROLL=${APP_ROLL:-0}
 ROT_WHEN_ROLLED=$(echo "$ATTITUDE_ROLLED" | grep -o "rot=[0-9]*" | cut -d= -f2 || true)
 ROT_WHEN_ROLLED=${ROT_WHEN_ROLLED:-$DISPLAY_ROTATION}
-# The furthest the renderer actually rolled while the phone was tilted. Picked
-# by size rather than by value: the camera rolls the opposite way to the phone,
-# so the interesting frame is the most negative one, and sorting either end
-# would silently pick the wrong frame if the sign ever flipped again.
-DRAW_ROLL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 \
-    | python3 -c "import sys; v=[float(x) for x in sys.stdin if x.strip()]; print(max(v, key=abs) if v else 0)" || true)
+# What the renderer settled on under the tilt — the most recent value, not the
+# largest. Taking the largest picks up whatever the camera was doing mid-way
+# through a display rotation, which is a number describing nothing: one run
+# reported 38 degrees of camera roll for 25 degrees of wheel that way.
+DRAW_ROLL=$(adb logcat -d | grep -oE "draw roll=-?[0-9.]+" | cut -d= -f2 | tail -1 || true)
 DRAW_ROLL=${DRAW_ROLL:-0}
 echo "the app saw ${APP_ROLL} deg; the renderer drew with up to ${DRAW_ROLL} deg"
 
@@ -510,35 +502,33 @@ HUD
 # and no amount of fitting made it trustworthy on a real scene. It is still
 # printed above, as a hint, but nothing depends on it.
 python3 - "$ROLL_DEG" "$APP_ROLL" "$DRAW_ROLL" "$DRAW_ROLL_LEVEL" "$APP_ROLL_LEVEL" \
-    "$DISPLAY_ROTATION" "$ROT_WHEN_ROLLED" <<'TILT' || FAILED=1
+    "$ROT_WHEN_ROLLED" "$GRAVITY" <<'TILT' || FAILED=1
+import math
 import sys
 
 injected, app, drew, level, appLevel = (float(v) for v in sys.argv[1:6])
-builtFor, readAt = (int(v) for v in sys.argv[6:8])
+readAt = int(sys.argv[6])
+gx, gy, _ = (float(v) for v in sys.argv[7].split(":"))
 
-# The gravity vector is built for the rotation the display was in, and the app
-# undoes that same rotation to get back to screen coordinates. Build it for one
-# landscape and read it in the other and every angle comes back negated — which
-# is a mismatch, not a sign convention, and cost five rounds of arguing about
-# which way round the emulator holds things.
-if builtFor != readAt:
-    print(f"FAIL: the injection was built for display rotation {builtFor} and "
-          f"read back at {readAt}. The display turned mid-check; nothing about "
-          f"the reading can be interpreted.")
-    sys.exit(1)
-
-# The whole chain, in absolute terms, which this job could not do until now.
+# What the app should read, from the vector that was actually sent and the
+# rotation it was actually in when the reading was taken.
 #
-# It used to measure only the *change* between two readings, because the app
-# reported 180 degrees for a vector built to be level and every reading was
-# saturated against the camera's roll limit. That was the app's own maths, not
-# the emulator: the roll was an atan2 of the two in-screen gravity components,
-# which is 180 for a level vector that has no roll in it at all. Measured
-# against the whole gravity vector, level reads level, nothing saturates, and
-# each link can be checked for what it actually is.
+# Not the rotation this script guessed at when it built the vector: the
+# injection itself can turn a sensorLandscape display, minutes of wall clock
+# later on an emulator this slow, and five rounds went into mistaking the
+# resulting negation for a sign convention of the emulator's.
+a = math.radians(readAt)
+sx = gx * math.cos(a) + gy * math.sin(a)
+expected = math.degrees(math.asin(max(-1.0, min(1.0, sx / 9.81))))
 
 print(f"held level: wheel {appLevel:.1f} deg, horizon drawn {level:.1f} deg")
-print(f"rolled {injected:.0f} deg: wheel {app:.1f} deg, horizon drawn {drew:.1f} deg")
+print(f"rolled {injected:.0f} deg at display rotation {readAt}: expected {expected:.1f} deg "
+      f"of wheel, got {app:.1f}; horizon drawn {drew:.1f}")
+
+if abs(abs(expected) - injected) > 1:
+    print(f"FAIL: the injected vector carries {expected:.1f} deg of roll, not "
+          f"{injected:.0f}. The vector was built wrong.")
+    sys.exit(1)
 
 if abs(appLevel) > 5:
     print(f"FAIL: held level the wheel reads {appLevel:.1f} deg, not straight ahead.")
@@ -550,8 +540,8 @@ if abs(level) > 5:
 
 # Size and sign together. A mirrored wheel is the bug that shipped once and was
 # reported from a real device, and a check on magnitude alone would pass it.
-if abs(app - injected) > 6:
-    print(f"FAIL: a {injected:.0f} deg roll of the phone reads as {app:.1f} deg "
+if abs(app - expected) > 6:
+    print(f"FAIL: a {expected:.1f} deg roll of the phone reads as {app:.1f} deg "
           f"of wheel.")
     sys.exit(1)
 
@@ -559,9 +549,9 @@ if abs(app - injected) > 6:
 # degrees has to roll the view 25 degrees anticlockwise, or the horizon tips
 # twice as far instead of standing still — which is exactly what shipped, and
 # was reported from a real device.
-if abs(drew + injected) > 8:
-    print(f"FAIL: a {injected:.0f} deg phone roll drew a {drew:.1f} deg camera "
-          f"roll; it should be about {-injected:.0f}. Rolling the camera the same "
+if abs(drew + expected) > 8:
+    print(f"FAIL: a {expected:.1f} deg phone roll drew a {drew:.1f} deg camera "
+          f"roll; it should be about {-expected:.1f}. Rolling the camera the same "
           f"way as the phone doubles the tilt instead of cancelling it.")
     sys.exit(1)
 
