@@ -69,7 +69,7 @@ tap_text() {
     # meant tapping the corner of the screen and calling the button broken:
     # that is what made MENU look dead for three runs, and the gas slider
     # before it.
-    bounds=$(adb shell cat /sdcard/ui.xml | tr '>' '\n' \
+    bounds=$( { adb shell cat /sdcard/ui.xml 2>/dev/null || true; } | tr '>' '\n' \
         | grep -F "text=\"$label\"" | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' \
         | grep -v 'bounds="\[0,0\]\[0,0\]"' | head -1 || true)
     [ -n "$bounds" ] || return 1
@@ -117,7 +117,7 @@ if [ "$h" -gt "$w" ]; then t=$w; w=$h; h=$t; fi
 # What is actually on screen right now? If the menu is still up while the game
 # reports RACING, the HUD is not following the game state.
 adb shell uiautomator dump /sdcard/ui2.xml >/dev/null 2>&1 || true
-UI2=$(adb shell cat /sdcard/ui2.xml 2>/dev/null)
+UI2=$(adb shell cat /sdcard/ui2.xml 2>/dev/null || true)
 ON_SCREEN=$(echo "$UI2" | grep -o 'text="[^"]*"' | sed 's/text=//' | sort -u | tr '\n' ' ' || true)
 echo "on screen during the race: $ON_SCREEN"
 
