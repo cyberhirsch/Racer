@@ -535,8 +535,14 @@ builtFor = int(sys.argv[9])
 # injection itself can turn a sensorLandscape display, minutes of wall clock
 # later on an emulator this slow, and five rounds went into mistaking the
 # resulting negation for a sign convention of the emulator's.
-a = math.radians(readAt)
-sx = gx * math.cos(a) + gy * math.sin(a)
+# Android's table again, in the direction the app applies it. This was the
+# inverse rotation, left over from when the app had it that way round too.
+sx = {
+    0: gx,
+    90: -gy,
+    180: -gx,
+    270: gy,
+}[readAt]
 expected = math.degrees(math.asin(max(-1.0, min(1.0, sx / 9.81))))
 
 print(f"held level: wheel {appLevel:.1f} deg, horizon drawn {level:.1f} deg")
