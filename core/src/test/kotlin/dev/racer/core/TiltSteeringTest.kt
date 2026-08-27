@@ -230,6 +230,23 @@ class TiltSteeringTest {
         assertTrue("flat on the table, none of it should be applied", applied.last() < 0.05)
     }
 
+    /**
+     * Tipped past flat — screen facing up with the top edge below the bottom —
+     * the picture's rotation is a real number and a useless one: level reads as
+     * a hundred and eighty degrees of horizon to cancel, which slams the view
+     * against its roll limit and pins it there. The emulator's sensor frame
+     * sits permanently in this attitude, which is how it was found.
+     */
+    @Test
+    fun `tipped past flat, the horizon is left alone rather than thrown over`() {
+        val t = TiltSteering()
+        // Gravity up the screen's *down* axis: past flat, and otherwise level.
+        t.onGravity(0.0, -9.81, 0.0, 0)
+        assertEquals("past flat is not upright", 0.0, t.uprightness, 1e-9)
+        assertEquals("the horizon must be left where it is", 0.0, t.viewRoll, 1e-9)
+        assertEquals("and it is not steering either", 0.0, t.rollFromNeutral, 1e-9)
+    }
+
     @Test
     fun `applies a deadzone and saturates at full lock`() {
         val t = TiltSteering()

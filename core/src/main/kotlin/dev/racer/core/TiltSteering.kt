@@ -125,12 +125,22 @@ class TiltSteering(
         // How much of gravity lies in the plane of the screen — one when the
         // phone is upright, nought when it is flat. See [viewRoll].
         // How upright the phone is being held: how far the screen's own up
-        // axis is from lying flat. Deliberately not the total amount of
-        // gravity in the screen plane — turning the wheel puts gravity in that
-        // plane too, so a phone laid flat on a table and rolled ten degrees
-        // would count as a third of the way upright and get a third of the
-        // horizon correction, on a screen where the correct answer is none.
-        uprightness = (abs(sy) / magnitude).coerceIn(0.0, 1.0)
+        // axis points up.
+        //
+        // Deliberately not the total amount of gravity in the screen plane —
+        // turning the wheel puts gravity in that plane too, so a phone laid
+        // flat on a table and rolled ten degrees would count as a third of the
+        // way upright and get a third of the horizon correction, on a screen
+        // where the correct answer is none.
+        //
+        // And signed, not absolute: tipped past flat, so the top of the screen
+        // is lower than the bottom, this goes negative and clamps to nought.
+        // The picture's rotation is a perfectly good number there and looks
+        // terrible — a level phone one degree past flat reads as a hundred and
+        // eighty degrees of horizon to cancel, which slams the view against
+        // its roll limit and holds it there. Nobody is reading the screen from
+        // that attitude anyway.
+        uprightness = (sy / magnitude).coerceIn(0.0, 1.0)
 
         // The rotation of the picture on the glass: the angle gravity makes
         // within the plane of the screen. Meaningless when the phone is flat,

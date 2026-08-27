@@ -215,7 +215,7 @@ echo "the display is rotated ${DISPLAY_ROTATION} degrees from the device's natur
 # Gravity in device axes for a given roll of the screen, by inverting exactly
 # the mapping TiltSteering applies.
 device_gravity() {
-    python3 - "$1" "$DISPLAY_ROTATION" <<'GRAV'
+    python3 - "$1" "$DISPLAY_ROTATION" "${FLIP:-1}" <<'GRAV'
 import math, sys
 roll = math.radians(float(sys.argv[1]))
 a = math.radians(float(sys.argv[2]))
@@ -232,7 +232,14 @@ gy = sx * math.sin(a) + sy * math.cos(a)
 # looks exactly like a convention to be negated and is not one. The check
 # below refuses to interpret a reading taken in a different rotation from the
 # one it was built for, so that can no longer be mistaken for this.
-print(f"{gx:.3f}:{gy:.3f}:0")
+# FLIP puts the emulator into an attitude the app calls upright. Its sensor
+# frame has the screen's up axis pointing down — a phone tipped past flat,
+# where the app deliberately stops levelling the horizon because the angle to
+# cancel there is 180 degrees and looks like it sounds. Which sign is needed
+# depends on the landscape the display settled in, so it is measured rather
+# than assumed; see where FLIP is worked out.
+flip = float(sys.argv[3])
+print(f"{flip * gx:.3f}:{flip * gy:.3f}:0")
 GRAV
 }
 
@@ -269,6 +276,23 @@ if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
 # reported from a real device.
 DISPLAY_ROTATION=$(latest_rotation)
 DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
+
+# Which way round this emulator's sensor frame sits, asked rather than assumed.
+#
+# Inject level and see whether the app calls the result upright. If it reports
+# nought, the vector arrived with the screen's up axis pointing down — a phone
+# tipped past flat, an attitude in which the app leaves the horizon alone on
+# purpose — and the injection has to be turned round. Which of the two it is
+# depends on the landscape the display settled in, and that is not stable from
+# run to run.
+FLIP=1
+adb emu "sensor set acceleration $(device_gravity 0)" || true
+sleep 4
+UPRIGHT=$(adb logcat -d 2>/dev/null | grep -o "upright=[0-9.]*" | tail -1 | cut -d= -f2 || true)
+UPRIGHT=${UPRIGHT:-1}
+if [ "$(python3 -c "print(1 if float('${UPRIGHT}') < 0.5 else 0)")" = "1" ]; then FLIP=-1; fi
+echo "the app called that attitude upright=$UPRIGHT, so the sensor frame flip is $FLIP"
+
 GRAVITY=$(device_gravity "$ROLL_DEG")
 echo "display at ${DISPLAY_ROTATION} deg, injecting $GRAVITY (a ${ROLL_DEG} degree roll)"
 # One argument, not five. A vector for a landscape display often starts with a
