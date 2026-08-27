@@ -247,38 +247,57 @@ CENTRE_RECT=$( { cat "$OUT/logcat-race.txt" 2>/dev/null; adb logcat -d 2>/dev/nu
 if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
 if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
 
-# The display rotation, taken as late as possible and from the app itself.
+# Inject the tilt, and keep injecting until the display stops moving.
 #
-# This decides which device axes a screen-frame vector lands on, so the
-# injection is built with it and the reading is only meaningful if the display
-# was still in the same rotation when it was taken. The emulator does not
-# reliably settle in the same landscape from run to run, and reading this too
-# early is how an injection built for one landscape came to be read back in the
-# other — which negates every angle and reads exactly like a sign convention.
-DISPLAY_ROTATION=$(adb logcat -d 2>/dev/null | grep -o "attitude rot=[0-9]*" \
-    | tail -1 | cut -d= -f2 || true)
-DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
-echo "the display is rotated ${DISPLAY_ROTATION} degrees, taken just before injecting"
+# The rotation is not something that can be read and then relied on: the
+# activity is sensorLandscape, so it follows gravity, and gravity here is
+# whatever this script has just injected. Build a screen-frame vector for
+# rotation 90, and if Android decides that attitude is rotation 270, the
+# display turns and the app undoes a rotation the vector was never built for —
+# which negates every angle and reads exactly like a sign convention. Five
+# rounds went into arguing about that sign.
+#
+# So this looks for the fixed point instead: build for whatever rotation is in
+# force, inject, and see where the display ended up. When it ends up where it
+# started, the two sides agree and the reading means something.
+latest_rotation() {
+    adb logcat -d 2>/dev/null | grep -o "attitude rot=[0-9]*" | tail -1 | cut -d= -f2 || true
+}
 
-# Now clear it: readings from before the injection would otherwise be picked up
-# as the largest of the run.
-adb logcat -c
+for attempt in 1 2 3; do
+    DISPLAY_ROTATION=$(latest_rotation)
+    DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
+    GRAVITY=$(device_gravity "$ROLL_DEG")
+    echo "attempt $attempt: display at ${DISPLAY_ROTATION} deg, injecting $GRAVITY" \
+        "(a ${ROLL_DEG} degree clockwise roll)"
+    # One argument, not five. A vector for a landscape display often starts
+    # with a minus sign, and adb takes such an argument for one of its own
+    # flags — which is why two rounds of injecting gravity changed nothing at
+    # all and looked like the emulator using the opposite sign convention. It
+    # does not: asked what it holds, it reports exactly what it is given.
+    adb emu "sensor set acceleration $GRAVITY" || echo "could not drive the emulator's sensor"
+    sleep 4
+    SETTLED_ROTATION=$(latest_rotation)
+    SETTLED_ROTATION=${SETTLED_ROTATION:-$DISPLAY_ROTATION}
+    # An if, not a && — under set -e a bare `[ ... ] && break` whose test
+    # fails ends the whole script, which is the single most expensive mistake
+    # available in this file.
+    if [ "$SETTLED_ROTATION" = "$DISPLAY_ROTATION" ]; then break; fi
+    echo "the display turned to ${SETTLED_ROTATION} under that vector; building for it instead"
+done
 
-device_gravity "$ROLL_DEG" > /tmp/gravity.txt
+# Level, for the same rotation the tilt ended up agreeing on.
 device_gravity 0 > /tmp/gravity-level.txt
-GRAVITY=$(cat /tmp/gravity.txt)
-echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
-# One argument, not five. A vector for a landscape display often starts with a
-# minus sign, and adb takes such an argument for one of its own flags — which
-# is why two rounds of injecting gravity changed nothing at all and looked like
-# the emulator using the opposite sign convention. It does not: asked what it
-# holds, it reports exactly what it is given.
-adb emu "sensor set acceleration $GRAVITY" || echo "could not drive the emulator's sensor"
-sleep 2
+
 # What the emulator says it is actually holding, which is the only way to tell
 # a command it rejected from one it took and reinterpreted.
 SENSOR_ROLLED=$(adb emu "sensor get acceleration" 2>&1 | head -2 | tr '\n' ' ' || true)
 echo "sent $GRAVITY; the emulator reports $SENSOR_ROLLED"
+
+# Only now clear the log, so the readings below are all from after the tilt
+# settled and none of the iterations above can be picked up as the largest of
+# the run.
+adb logcat -c
 sleep 3
 adb exec-out screencap -p > "$OUT/04-rolled.png"
 # Read the roll the app had at this moment, before the sensor goes back.
