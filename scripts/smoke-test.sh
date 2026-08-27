@@ -224,46 +224,50 @@ sx, sy = 9.81 * math.sin(roll), 9.81 * math.cos(roll)
 # TiltSteering rotates device axes by -a to get these, so undo that.
 gx = sx * math.cos(a) - sy * math.sin(a)
 gy = sx * math.sin(a) + sy * math.cos(a)
-# Turned round. The emulator presents the in-plane part of an injected vector
-# rotated by 180 degrees before the app sees it, and the evidence for that is
-# now unambiguous: injecting a level vector, the app reads exactly 0 degrees of
-# roll, and injecting 25 degrees it reads exactly -25.
-#
-# Four earlier rounds argued about this sign and settled on "unchanged" from a
-# reading of 180 degrees for a level vector. That reading was an artefact of
-# the app's own maths, not of the emulator: the roll was an atan2 of the two
-# in-screen components, and atan2(0, -9.81) is 180 for a vector that has no
-# roll in it at all. With the roll now measured against the whole gravity
-# vector, level reads level, and what is left over is a real property of the
-# emulator rather than a quantity that was never measuring the right thing.
-print(f"{-gx:.3f}:{-gy:.3f}:0")
+# Not negated. The emulator takes the vector at face value and the app reads
+# back exactly what was sent — with one catch, which is what five rounds of
+# sign-flipping were actually chasing: the emulator does not always settle in
+# the same landscape. Build the injection for rotation 90 while the app is
+# running at 270 and every reading comes back with the opposite sign, which
+# looks exactly like a convention to be negated and is not one. The check
+# below refuses to interpret a reading taken in a different rotation from the
+# one it was built for, so that can no longer be mistaken for this.
+print(f"{gx:.3f}:{gy:.3f}:0")
 GRAV
 }
+
+# Prove the CENTRE button works while we are here. Nothing below depends on
+# it: a race starts from true level, and level is what the readings are taken
+# against.
+CENTRE_RECT=$( { cat "$OUT/logcat-race.txt" 2>/dev/null; adb logcat -d 2>/dev/null; } \
+    | grep -o "button CENTRE rect=[0-9,]*" | tail -1 | cut -d= -f2 || true)
+# Pressed twice on purpose: once to adopt the current hold, once to put it
+# back to level. That exercises the toggle both ways and leaves the wheel where
+# a race starts it, which is what everything below is measured against.
+if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
+if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
+
+# The display rotation, taken as late as possible and from the app itself.
+#
+# This decides which device axes a screen-frame vector lands on, so the
+# injection is built with it and the reading is only meaningful if the display
+# was still in the same rotation when it was taken. The emulator does not
+# reliably settle in the same landscape from run to run, and reading this too
+# early is how an injection built for one landscape came to be read back in the
+# other — which negates every angle and reads exactly like a sign convention.
+DISPLAY_ROTATION=$(adb logcat -d 2>/dev/null | grep -o "attitude rot=[0-9]*" \
+    | tail -1 | cut -d= -f2 || true)
+DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
+echo "the display is rotated ${DISPLAY_ROTATION} degrees, taken just before injecting"
+
+# Now clear it: readings from before the injection would otherwise be picked up
+# as the largest of the run.
+adb logcat -c
 
 device_gravity "$ROLL_DEG" > /tmp/gravity.txt
 device_gravity 0 > /tmp/gravity-level.txt
 GRAVITY=$(cat /tmp/gravity.txt)
 echo "injecting gravity $GRAVITY (a ${ROLL_DEG} degree clockwise roll)"
-
-# Centre the wheel on whatever the emulator is currently reporting, before
-# injecting anything.
-#
-# On a phone, level is level, and the app now starts there. The emulator is not
-# a phone: it puts injected acceleration through its own idea of device
-# orientation, and the app reads 180 degrees for a vector built to be level —
-# the same 180 whichever way that vector is turned round. What it does track
-# faithfully is a *change*: a 25 degree roll moves the reading by exactly 25
-# degrees. So the wheel is centred here first, and everything below measures
-# the change, which is the part of the chain — sensor, to steering, to camera —
-# that this job can honestly check. That a race starts at true level is pinned
-# by unit tests in :core, and is a question for a real device.
-CENTRE_RECT=$( { cat "$OUT/logcat-race.txt" 2>/dev/null; adb logcat -d 2>/dev/null; } \
-    | grep -o "button CENTRE rect=[0-9,]*" | tail -1 | cut -d= -f2 || true)
-if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
-
-# Clear the log: the roll before centring would otherwise be picked up as the
-# largest of the run.
-adb logcat -c
 # One argument, not five. A vector for a landscape display often starts with a
 # minus sign, and adb takes such an argument for one of its own flags — which
 # is why two rounds of injecting gravity changed nothing at all and looked like
@@ -278,9 +282,14 @@ echo "sent $GRAVITY; the emulator reports $SENSOR_ROLLED"
 sleep 3
 adb exec-out screencap -p > "$OUT/04-rolled.png"
 # Read the roll the app had at this moment, before the sensor goes back.
-APP_ROLL=$(adb logcat -d | grep -o "attitude .*phoneRoll=[-0-9.]*" | tail -1 \
-    | grep -o "phoneRoll=[-0-9.]*" | cut -d= -f2 || true)
+# Roll and rotation off the *same* line. Taken separately, they can describe
+# different moments, and the display rotation is the one number that decides
+# what the roll means.
+ATTITUDE_ROLLED=$(adb logcat -d | grep -o "attitude .*steer=[-0-9.]*" | tail -1 || true)
+APP_ROLL=$(echo "$ATTITUDE_ROLLED" | grep -o "phoneRoll=[-0-9.]*" | cut -d= -f2 || true)
 APP_ROLL=${APP_ROLL:-0}
+ROT_WHEN_ROLLED=$(echo "$ATTITUDE_ROLLED" | grep -o "rot=[0-9]*" | cut -d= -f2 || true)
+ROT_WHEN_ROLLED=${ROT_WHEN_ROLLED:-$DISPLAY_ROTATION}
 # The furthest the renderer actually rolled while the phone was tilted. Picked
 # by size rather than by value: the camera rolls the opposite way to the phone,
 # so the interesting frame is the most negative one, and sorting either end
@@ -399,6 +408,7 @@ adb shell dumpsys activity activities | grep -q "$PACKAGE" && FOREGROUND=yes
     echo "SMOKE audio: $(grep -c "engine audio started" "$OUT/logcat.txt") engine synth start(s)"
     echo "SMOKE frame rate: $(grep -o "render [0-9.]* fps" "$OUT/logcat.txt" | tail -4 | tr '\n' ' ' || true)"
     echo "SMOKE tilt: level -> app read ${APP_ROLL_LEVEL} deg, renderer drew ${DRAW_ROLL_LEVEL} deg"
+    echo "SMOKE tilt: built for display rotation ${DISPLAY_ROTATION}, read back at ${ROT_WHEN_ROLLED}"
     echo "SMOKE the display was rotated ${DISPLAY_ROTATION} deg; gravity was injected in those axes"
     echo "SMOKE sent ${GRAVITY} for a ${ROLL_DEG} deg roll, and ${LEVEL_GRAVITY:-?} for level"
     echo "SMOKE the emulator held: ${SENSOR_ROLLED:-?} then ${SENSOR_LEVEL:-?}"
@@ -480,10 +490,23 @@ HUD
 # barriers, poles, the start gantry and distance fog all cut into the skyline,
 # and no amount of fitting made it trustworthy on a real scene. It is still
 # printed above, as a hint, but nothing depends on it.
-python3 - "$ROLL_DEG" "$APP_ROLL" "$DRAW_ROLL" "$DRAW_ROLL_LEVEL" "$APP_ROLL_LEVEL" <<'TILT' || FAILED=1
+python3 - "$ROLL_DEG" "$APP_ROLL" "$DRAW_ROLL" "$DRAW_ROLL_LEVEL" "$APP_ROLL_LEVEL" \
+    "$DISPLAY_ROTATION" "$ROT_WHEN_ROLLED" <<'TILT' || FAILED=1
 import sys
 
 injected, app, drew, level, appLevel = (float(v) for v in sys.argv[1:6])
+builtFor, readAt = (int(v) for v in sys.argv[6:8])
+
+# The gravity vector is built for the rotation the display was in, and the app
+# undoes that same rotation to get back to screen coordinates. Build it for one
+# landscape and read it in the other and every angle comes back negated — which
+# is a mismatch, not a sign convention, and cost five rounds of arguing about
+# which way round the emulator holds things.
+if builtFor != readAt:
+    print(f"FAIL: the injection was built for display rotation {builtFor} and "
+          f"read back at {readAt}. The display turned mid-check; nothing about "
+          f"the reading can be interpreted.")
+    sys.exit(1)
 
 # The whole chain, in absolute terms, which this job could not do until now.
 #
