@@ -92,10 +92,29 @@ class TiltSteering(
         hasSensor = true
         // Rotate the in-plane gravity components into the *screen's* frame, so
         // landscape behaves exactly like portrait.
+        // Sensor axes are fixed to the hardware; the display turns underneath
+        // them. Android documents the mapping as a table, and it is worth
+        // writing the table out, because getting the direction of this
+        // rotation backwards is exactly 180 degrees wrong in both landscapes
+        // and nowhere else:
+        //
+        //     rotation    screen right    screen up
+        //          0          +x             +y
+        //         90          -y             +x
+        //        180          -x             -y
+        //        270          +y             -x
+        //
+        // That is a rotation of the device axes by +a. It was by -a here,
+        // which agrees at 0 and 180 and is upside down at 90 and 270 — the
+        // only two this game ever runs in. It negated both components, which
+        // mirrored the steering and made the phone read as permanently tipped
+        // past flat, so the horizon levelling switched itself off. Calibrating
+        // the neutral at the start of each race hid it for months: a constant
+        // 180 degrees is precisely what calibration absorbs.
         val a = displayRotationDegrees * PI / 180.0
         val ca = cos(a); val sa = sin(a)
-        val sx = gx * ca + gy * sa
-        val sy = -gx * sa + gy * ca
+        val sx = gx * ca - gy * sa
+        val sy = gx * sa + gy * ca
 
         val magnitude = sqrt(gx * gx + gy * gy + gz * gz)
         if (magnitude < 1e-3) return
@@ -118,8 +137,14 @@ class TiltSteering(
         //
         // Measured against the whole gravity vector instead, the answer is the
         // angle the phone has actually been turned through, at every hold
-        // angle from flat to vertical. Same sign as before: the wheel still
-        // turns the way it did.
+        // angle from flat to vertical.
+        //
+        // Which way it turns the car, stated once so it can be checked without
+        // unpicking the maths: tilting the screen's right-hand edge *down*
+        // steers left. Gravity is reported pointing away from the ground, so
+        // that attitude puts a negative component along the screen's right
+        // axis, and negative steer is a left turn. INVERT is there for anyone
+        // who wants it the other way round.
         rawRoll = asin((sx / magnitude).coerceIn(-1.0, 1.0))
 
         // How much of gravity lies in the plane of the screen — one when the

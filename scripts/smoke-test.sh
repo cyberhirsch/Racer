@@ -215,31 +215,35 @@ echo "the display is rotated ${DISPLAY_ROTATION} degrees from the device's natur
 # Gravity in device axes for a given roll of the screen, by inverting exactly
 # the mapping TiltSteering applies.
 device_gravity() {
-    python3 - "$1" "$DISPLAY_ROTATION" "${FLIP:-1}" <<'GRAV'
+    python3 - "$1" "$DISPLAY_ROTATION" <<'GRAV'
 import math, sys
 roll = math.radians(float(sys.argv[1]))
-a = math.radians(float(sys.argv[2]))
-# What the screen should see: gravity up the screen, swung by the roll.
-sx, sy = 9.81 * math.sin(roll), 9.81 * math.cos(roll)
-# TiltSteering rotates device axes by -a to get these, so undo that.
-gx = sx * math.cos(a) - sy * math.sin(a)
-gy = sx * math.sin(a) + sy * math.cos(a)
-# Not negated. The emulator takes the vector at face value and the app reads
-# back exactly what was sent — with one catch, which is what five rounds of
-# sign-flipping were actually chasing: the emulator does not always settle in
-# the same landscape. Build the injection for rotation 90 while the app is
-# running at 270 and every reading comes back with the opposite sign, which
-# looks exactly like a convention to be negated and is not one. The check
-# below refuses to interpret a reading taken in a different rotation from the
-# one it was built for, so that can no longer be mistaken for this.
-# FLIP puts the emulator into an attitude the app calls upright. Its sensor
-# frame has the screen's up axis pointing down — a phone tipped past flat,
-# where the app deliberately stops levelling the horizon because the angle to
-# cancel there is 180 degrees and looks like it sounds. Which sign is needed
-# depends on the landscape the display settled in, so it is measured rather
-# than assumed; see where FLIP is worked out.
-flip = float(sys.argv[3])
-print(f"{flip * gx:.3f}:{flip * gy:.3f}:0")
+rot = int(round(float(sys.argv[2])))
+
+# What the screen should see: gravity up the screen, with the right-hand edge
+# tilted down by the roll. Android reports gravity pointing away from the
+# ground, so tilting the right edge down puts a negative component along the
+# screen's right axis.
+right = -9.81 * math.sin(roll)
+up = 9.81 * math.cos(roll)
+
+# Then into device axes, from Android's own table rather than by inverting a
+# formula. Inverting the app's formula is how this went wrong: the app had the
+# rotation the wrong way round, this undid it the same wrong way, and the two
+# agreed with each other while both were 180 degrees out in both landscapes.
+#
+#     rotation    screen right    screen up
+#          0          +x             +y
+#         90          -y             +x
+#        180          -x             -y
+#        270          +y             -x
+gx, gy = {
+    0: (right, up),
+    90: (up, -right),
+    180: (-right, -up),
+    270: (-up, right),
+}[rot]
+print(f"{gx:.3f}:{gy:.3f}:0")
 GRAV
 }
 
@@ -276,22 +280,6 @@ if tap_rect "${CENTRE_RECT:-}" CENTRE; then sleep 3; fi
 # reported from a real device.
 DISPLAY_ROTATION=$(latest_rotation)
 DISPLAY_ROTATION=${DISPLAY_ROTATION:-0}
-
-# Which way round this emulator's sensor frame sits, asked rather than assumed.
-#
-# Inject level and see whether the app calls the result upright. If it reports
-# nought, the vector arrived with the screen's up axis pointing down — a phone
-# tipped past flat, an attitude in which the app leaves the horizon alone on
-# purpose — and the injection has to be turned round. Which of the two it is
-# depends on the landscape the display settled in, and that is not stable from
-# run to run.
-FLIP=1
-adb emu "sensor set acceleration $(device_gravity 0)" || true
-sleep 4
-UPRIGHT=$(adb logcat -d 2>/dev/null | grep -o "upright=[0-9.]*" | tail -1 | cut -d= -f2 || true)
-UPRIGHT=${UPRIGHT:-1}
-if [ "$(python3 -c "print(1 if float('${UPRIGHT}') < 0.5 else 0)")" = "1" ]; then FLIP=-1; fi
-echo "the app called that attitude upright=$UPRIGHT, so the sensor frame flip is $FLIP"
 
 GRAVITY=$(device_gravity "$ROLL_DEG")
 echo "display at ${DISPLAY_ROTATION} deg, injecting $GRAVITY (a ${ROLL_DEG} degree roll)"
@@ -530,7 +518,7 @@ HUD
 # and no amount of fitting made it trustworthy on a real scene. It is still
 # printed above, as a hint, but nothing depends on it.
 python3 - "$ROLL_DEG" "$APP_ROLL" "$DRAW_ROLL" "$DRAW_ROLL_LEVEL" "$APP_ROLL_LEVEL" \
-    "$ROT_WHEN_ROLLED" "$GRAVITY" "$UPRIGHT_WHEN_ROLLED" <<'TILT' || FAILED=1
+    "$ROT_WHEN_ROLLED" "$GRAVITY" "$UPRIGHT_WHEN_ROLLED" "$DISPLAY_ROTATION" <<'TILT' || FAILED=1
 import math
 import sys
 
@@ -538,6 +526,7 @@ injected, app, drew, level, appLevel = (float(v) for v in sys.argv[1:6])
 readAt = int(sys.argv[6])
 gx, gy, _ = (float(v) for v in sys.argv[7].split(":"))
 upright = float(sys.argv[8])
+builtFor = int(sys.argv[9])
 
 # What the app should read, from the vector that was actually sent and the
 # rotation it was actually in when the reading was taken.
@@ -581,21 +570,24 @@ if abs(app - expected) > 6:
 # twice as far instead of standing still — which is exactly what shipped, and
 # was reported from a real device.
 #
-# Only checkable on the runs where the emulator's sensor frame happens to land
-# the right way up. Its frame has the screen's up axis pointing down as often
-# as not — a phone tipped past flat, where the app leaves the horizon alone on
-# purpose — and which way it lands depends on the landscape the display
-# settled in, which changes underneath any attempt to correct for it. On those
-# runs there is no camera roll to check, because there should not be one.
-#
-# The behaviour itself is pinned in :core, and more thoroughly than this could:
-# TiltSteeringTest checks the view rolls back by exactly the angle the picture
-# turned, at six holds from ten degrees off flat to upright, and CameraRollTest
-# puts the world horizon through the real view matrix.
+# Two ways the phone can read as tipped past flat, and they mean opposite
+# things. If the display turned between building the vector and reading it, the
+# vector describes a different attitude than intended and past flat is the
+# honest answer — the wheel check above still holds, because it is computed
+# from the rotation the reading was taken in, but there is no camera roll to
+# check because the app declines to level a horizon past flat. If the rotation
+# did match, past flat from a vector built upright means the mapping between
+# device axes and screen axes is out, which is exactly the bug that shipped.
+if upright < 0.5 and builtFor == readAt:
+    print(f"FAIL: at display rotation {readAt}, a vector built upright read as "
+          f"tipped past flat (upright={upright:.2f}). The device-to-screen axis "
+          f"mapping is out.")
+    sys.exit(1)
+
 if upright < 0.5:
-    print(f"camera roll not checked: the emulator's frame was past flat this run "
-          f"(upright={upright:.2f}), where the horizon is deliberately left alone. "
-          f"It drew {drew:.1f}.")
+    print(f"camera roll not checked: the display turned from {builtFor} to {readAt} "
+          f"mid-check, so the injected vector was past flat by the time it was read "
+          f"(upright={upright:.2f}). It drew {drew:.1f}.")
 elif abs(drew + expected) > 8:
     print(f"FAIL: a {expected:.1f} deg phone roll drew a {drew:.1f} deg camera "
           f"roll; it should be about {-expected:.1f}. Rolling the camera the same "

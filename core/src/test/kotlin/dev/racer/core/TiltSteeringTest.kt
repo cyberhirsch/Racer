@@ -38,32 +38,64 @@ class TiltSteeringTest {
      * gravity out of the screen plane, scaling the in-plane part without
      * turning it.
      */
+    /**
+     * Where the screen's own axes point, in device coordinates, for each
+     * display rotation.
+     *
+     * Straight out of Android's documentation, written as the table it is.
+     * This is the whole point of the helper: the previous version built its
+     * gravity by inverting the formula under test, so the test and the code
+     * shared an assumption and agreed with each other while both were 180
+     * degrees out in both landscapes. A test may not derive its expectations
+     * from the thing it is testing.
+     *
+     *     rotation    screen right    screen up
+     *          0          +x             +y
+     *         90          -y             +x
+     *        180          -x             -y
+     *        270          +y             -x
+     */
+    private fun toDeviceAxes(
+        right: Double,
+        up: Double,
+        displayRotation: Int
+    ): Pair<Double, Double> = when (displayRotation) {
+        0 -> Pair(right, up)
+        90 -> Pair(up, -right)
+        180 -> Pair(-right, -up)
+        270 -> Pair(-up, right)
+        else -> throw IllegalArgumentException("not a display rotation: $displayRotation")
+    }
+
+    /**
+     * Gravity as Android reports it, in device coordinates, for a phone held
+     * with the screen's right-hand edge tilted **down** by `roll` and laid
+     * back from vertical by `pitch`.
+     *
+     * The one physical convention everything here rests on, stated once so it
+     * can be checked by eye: Android's gravity vector points *away* from the
+     * ground, so a phone held upright in its natural orientation reads about
+     * (0, +9.81, 0). Tilt the right-hand edge of the screen down and the
+     * screen's right axis now points partly downward, so gravity's component
+     * along it goes negative.
+     *
+     * Laying the phone back tips gravity out of the screen plane without
+     * turning it: the screen's right axis stays horizontal however far back it
+     * goes, so the sideways component does not shrink with pitch. The previous
+     * version scaled it as though it did, which made the maths look right at
+     * every hold angle when it was right at only one.
+     */
     private fun gravityFor(
         roll: Double,
         pitch: Double = 0.0,
         displayRotation: Int = 0
     ): Triple<Double, Double, Double> {
         val g = 9.81
-        // First in the screen's own frame: right, up, and out of the glass.
-        //
-        // The sideways component does *not* shrink with pitch — the screen's
-        // left-right axis stays horizontal however far the phone is tilted
-        // back. The old version of this helper scaled it along with the
-        // upward one, which made the maths look right at every hold angle
-        // when in fact it was right at only one, and is why this file could
-        // not fail on the bug that shipped.
-        val right = sin(roll) * g
+        val right = -sin(roll) * g
         val up = cos(pitch) * cos(roll) * g
         val outOfScreen = sin(pitch) * cos(roll) * g
-
-        // Then back into device axes, which is what the sensor reports and
-        // what the steering is given. Skipping this step and passing screen
-        // coordinates straight in used to pass anyway, because the test
-        // calibrated its neutral in the same orientation and a constant
-        // offset is exactly what calibration hides.
-        val a = displayRotation * PI / 180.0
-        val ca = cos(a); val sa = sin(a)
-        return Triple(right * ca - up * sa, right * sa + up * ca, outOfScreen)
+        val (gx, gy) = toDeviceAxes(right, up, displayRotation)
+        return Triple(gx, gy, outOfScreen)
     }
 
     private fun recovered(roll: Double, displayRotation: Int, pitch: Double = 0.0): Double {
@@ -83,14 +115,16 @@ class TiltSteeringTest {
     fun `recovers the roll angle exactly in every screen orientation`() {
         for (rotation in listOf(0, 90, 180, 270)) {
             var worst = 0.0
-            var prev = Double.NEGATIVE_INFINITY
+            var prev = Double.POSITIVE_INFINITY
             var monotonic = true
             var deg = -40
             while (deg <= 40) {
                 val roll = deg * PI / 180
+                // Tilting the right-hand edge down is a left turn, so the
+                // wheel angle comes back as the negative of the tilt.
                 val got = recovered(roll, rotation)
-                worst = maxOf(worst, abs(got - roll))
-                if (got < prev) monotonic = false
+                worst = maxOf(worst, abs(got + roll))
+                if (got > prev) monotonic = false
                 prev = got
                 deg += 10
             }
@@ -112,6 +146,31 @@ class TiltSteeringTest {
             println("pitch %4d deg -> steering %.4f deg".format(pitchDeg, got * 180 / PI))
             assertEquals("pitch $pitchDeg", 0.0, got, 1e-9)
         }
+    }
+
+    /**
+     * Held level in landscape, the phone must read as upright.
+     *
+     * The check that catches a display-rotation mapping turned the wrong way
+     * round. Getting that backwards is exactly 180 degrees out at 90 and 270
+     * and correct at 0 and 180, so a phone in either landscape reads as tipped
+     * past flat — which switches the horizon levelling off entirely and
+     * mirrors the steering, and is what shipped.
+     */
+    @Test
+    fun `held level, the phone reads as upright in every display rotation`() {
+        for (rotation in listOf(0, 90, 180, 270)) {
+            val t = TiltSteering()
+            val (gx, gy, gz) = gravityFor(0.0, displayRotation = rotation)
+            t.onGravity(gx, gy, gz, rotation)
+            assertEquals(
+                "at display rotation $rotation a level phone read uprightness ${t.uprightness}",
+                1.0, t.uprightness, 1e-9
+            )
+            assertEquals("and the wheel must be straight", 0.0, t.rollFromNeutral, 1e-9)
+            assertEquals("and the horizon flat", 0.0, t.viewRoll, 1e-9)
+        }
+        println("level reads upright and straight in all four display rotations")
     }
 
     /**
@@ -138,8 +197,8 @@ class TiltSteeringTest {
                 t.onGravity(gx, gy, gz, 0)
                 val got = t.rollFromNeutral * 180 / PI
                 assertEquals(
-                    "held $pitchDeg deg off flat, a $rollDeg deg roll read as $got",
-                    rollDeg.toDouble(), got, 1e-6
+                    "held $pitchDeg deg off flat, a $rollDeg deg tilt read as $got",
+                    -rollDeg.toDouble(), got, 1e-6
                 )
             }
         }
@@ -263,31 +322,33 @@ class TiltSteeringTest {
         val (bx, by, bxbyz) = gravityFor(1.2)
         t.onGravity(bx, by, bxbyz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
-        assertEquals("did not reach full lock", 1.0, t.steer, 1e-3)
+        assertEquals("did not reach full lock", -1.0, t.steer, 1e-3)
     }
 
     /**
-     * A wheel turned clockwise steers right. This is the assertion that was
-     * wrong on the device, so it is stated in plain terms rather than left
-     * implicit in a round-trip.
+     * Tilting the screen's right-hand edge down steers left.
+     *
+     * The direction the game is played with, stated in plain terms rather than
+     * left implicit in a round trip, because it has been wrong on the device
+     * twice. INVERT is there for anyone who wants the other way round.
      */
     @Test
-    fun `rolling the phone clockwise steers right`() {
+    fun `tilting the right-hand edge down steers left`() {
         val t = TiltSteering()
         val (nx, ny, nxnyz) = gravityFor(0.0)
         t.onGravity(nx, ny, nxnyz, 0); t.calibrate()
 
-        val (cx, cy, cxcyz) = gravityFor(0.35)          // 20 degrees clockwise
+        val (cx, cy, cxcyz) = gravityFor(0.35)          // right edge down 20 deg
         t.onGravity(cx, cy, cxcyz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
-        println("clockwise 20 deg -> steer %+.3f".format(t.steer))
-        assertTrue("clockwise should steer right, got ${t.steer}", t.steer > 0.1)
+        println("right edge down 20 deg -> steer %+.3f".format(t.steer))
+        assertTrue("right edge down should steer left, got ${t.steer}", t.steer < -0.1)
 
-        val (ax, ay, axayz) = gravityFor(-0.35)         // 20 degrees anticlockwise
+        val (ax, ay, axayz) = gravityFor(-0.35)         // left edge down 20 deg
         t.onGravity(ax, ay, axayz, 0)
         repeat(400) { t.update(1.0 / 60.0) }
-        println("anticlockwise 20 deg -> steer %+.3f".format(t.steer))
-        assertTrue("anticlockwise should steer left, got ${t.steer}", t.steer < -0.1)
+        println("left edge down 20 deg -> steer %+.3f".format(t.steer))
+        assertTrue("left edge down should steer right, got ${t.steer}", t.steer > 0.1)
     }
 
     /**
@@ -303,13 +364,13 @@ class TiltSteeringTest {
 
         val (gx, gy, gxgyz) = gravityFor(0.4)
         t.onGravity(gx, gy, gxgyz, 0)
-        assertEquals(0.4, t.rollFromNeutral, 1e-9)
+        assertEquals(-0.4, t.rollFromNeutral, 1e-9)
         assertEquals("the view must roll against the phone, not with it",
-            -0.4, t.viewRoll, 1e-9)
+            0.4, t.viewRoll, 1e-9)
 
         t.invert = true
         assertEquals("inverting the steering must not roll the horizon the other way",
-            -0.4, t.viewRoll, 1e-9)
+            0.4, t.viewRoll, 1e-9)
     }
 
     @Test
@@ -349,9 +410,9 @@ class TiltSteeringTest {
         // steering, not a new centre.
         val (gx, gy, gxgyz) = gravityFor(0.35)
         t.onGravity(gx, gy, gxgyz, 0)
-        assertEquals(0.35, t.rollFromNeutral, 1e-9)
+        assertEquals(-0.35, t.rollFromNeutral, 1e-9)
         repeat(400) { t.update(1.0 / 60.0) }
-        assertTrue("holding it tilted should steer, not re-centre", t.steer > 0.2)
+        assertTrue("holding it tilted should steer, not re-centre", t.steer < -0.2)
     }
 
     @Test
@@ -375,6 +436,6 @@ class TiltSteeringTest {
         assertEquals("centred here, this is now straight ahead", 0.0, t.rollFromNeutral, 1e-9)
 
         t.levelOut()
-        assertEquals("levelling out puts the centre back to flat", 0.4, t.rollFromNeutral, 1e-9)
+        assertEquals("levelling out puts the centre back to flat", -0.4, t.rollFromNeutral, 1e-9)
     }
 }
