@@ -159,6 +159,16 @@ class Wreck(
     /** The tub. Everything else is glued to this, and the camera follows it. */
     val chassis: Body
 
+    /**
+     * Carbon and turf, thrown by every blow.
+     *
+     * Owned by the wreck rather than by the game, because everything that
+     * throws debris is in here and it has to be stepped on the wreck's clock —
+     * shards that carry on at full speed through Impact Time look like they
+     * belong to a different scene.
+     */
+    val debris = Debris()
+
     /** True once everything has stopped moving; nothing more will change. */
     var settled = false
         private set
@@ -295,6 +305,7 @@ class Wreck(
         }
         struck?.let { standingContact(it) }
         pieceContacts()
+        debris.step(dt)
         settled = bodies.all { it.resting }
     }
 
@@ -417,6 +428,10 @@ class Wreck(
                     reach = max(0.25f, b.radius * 0.8f)
                 )
             )
+            debris.burst(
+                Vec3(b.position.x, 0.05f, b.position.z),
+                Vec3(0f, 1f, 0f), closing, grass = true
+            )
         }
 
         if (b.velocity.y < 0f) {
@@ -511,6 +526,10 @@ class Wreck(
         // camera, so this stays linear in the speed and the violence comes
         // from the squaring rather than from tuning two curves at once.
         trauma = min(1.0, trauma + speed / TRAUMA_SPEED)
+        debris.burst(atWorld, direction, speed)
+        // Whatever it hit was standing in the rough, so the blow tears up the
+        // ground around it too.
+        if (atWorld.y < GRASS_HEIGHT) debris.burst(atWorld, Vec3(0f, 1f, 0f), speed * 0.7f, grass = true)
 
         val broken = ArrayList<Body>(2)
         for (b in bodies) {
@@ -649,6 +668,7 @@ class Wreck(
     private fun blow(b: Body, atWorld: Vec3, direction: Vec3, closing: Float) {
         if (closing < 0.5f) return
         trauma = min(1.0, trauma + closing / (TRAUMA_SPEED * 3f))
+        debris.burst(atWorld, direction, closing)
         b.dent(
             Dent(
                 at = localPointOf(b, atWorld),
@@ -710,6 +730,8 @@ class Wreck(
 
         /** The impact speed that fills the shake meter on its own, m/s. */
         private const val TRAUMA_SPEED = 30f
+        /** Below this a blow is close enough to the ground to tear up turf. */
+        private const val GRASS_HEIGHT = 1.2f
         private const val CONTACT_SKIN = 0.02f
 
         /**

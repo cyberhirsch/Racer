@@ -3,6 +3,7 @@ package dev.racer.app
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import dev.racer.core.CarMesh
+import dev.racer.core.Debris
 import dev.racer.core.Game
 import dev.racer.core.Mat4
 import dev.racer.core.Mesh
@@ -55,6 +56,23 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
      * without the two sides having to agree on an ordering.
      */
     private var carGpu: MutableMap<Mesh, GpuMesh> = HashMap()
+
+    /**
+     * One buffer for every shard of carbon and blade of grass a crash throws.
+     *
+     * Built world-space and drawn with an identity model matrix, so the whole
+     * spray — a couple of hundred quads — costs one upload and one draw call.
+     * Allocated on the first crash and kept, because its size never changes.
+     */
+    private var debrisBuffers: GpuMesh? = null
+
+    /**
+     * Which crash the debris buffer currently holds.
+     *
+     * A fresh wreck starts its shape version at zero, so without this a second
+     * crash would find the version it left the first one at and never upload.
+     */
+    private var debrisOwner: Debris? = null
 
     private var width = 1
     private var height = 1
@@ -306,6 +324,7 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
      * handing the GPU a piece's new shape on the frames it has been bent.
      */
     private fun drawWreck(wreck: Wreck, viewProjection: Mat4) {
+        drawDebris(wreck.debris, viewProjection)
         for (body in wreck.bodies) {
             val gpu = carGpu[body.base] ?: continue
             if (gpu.uploadedShape != body.shapeVersion) {
@@ -314,6 +333,30 @@ class GlRenderer(private val game: Game) : GLSurfaceView.Renderer {
             }
             draw(gpu, body.modelMatrix(), viewProjection)
         }
+    }
+
+    /**
+     * The spray.
+     *
+     * Both faces, because a shard is a flat quad that tumbles and would
+     * otherwise wink out of existence for half of every rotation. Culling is
+     * restored immediately afterwards rather than being left off for the
+     * wreck, which is closed geometry and wants it.
+     */
+    private fun drawDebris(debris: Debris, viewProjection: Mat4) {
+        val gpu = debrisBuffers ?: upload(Mesh(debris.vertices, debris.indices), dynamic = true)
+            .also { debrisBuffers = it }
+        if (debrisOwner !== debris) {
+            debrisOwner = debris
+            gpu.uploadedShape = -1
+        }
+        if (gpu.uploadedShape != debris.shapeVersion) {
+            gpu.replaceVertices(debris.vertices)
+            gpu.uploadedShape = debris.shapeVersion
+        }
+        GLES30.glDisable(GLES30.GL_CULL_FACE)
+        draw(gpu, Mat4.identity(), viewProjection)
+        GLES30.glEnable(GLES30.GL_CULL_FACE)
     }
 
     private fun draw(mesh: GpuMesh, model: Mat4, viewProjection: Mat4) {
