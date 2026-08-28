@@ -235,6 +235,12 @@ class Game(private val storage: Storage = Storage.InMemory()) {
                     z = hit.z + nz * hit.radius,
                     height = IMPACT_HEIGHT,
                     normalX = nx, normalZ = nz, speed = impact
+                ),
+                // Still standing, and still solid: the wreck can be thrown
+                // back off the thing that started it.
+                Wreck.Standing(
+                    hit.x, hit.z, hit.radius,
+                    height = if (hit.tree) TREE_HEIGHT else hit.radius * 1.6
                 )
             )
             fail(if (hit.tree) "HIT A TREE" else "HIT A ROCK")
@@ -403,6 +409,8 @@ class Game(private val storage: Storage = Storage.InMemory()) {
      * they rotate the phone to steer.
      */
     fun camera(dt: Double, aspect: Float): Camera {
+        wreck?.let { return crashCamera(it, dt, aspect) }
+
         val v = vehicle
         // Only a little pull-back with speed: too much and the car shrinks to a
         // dot exactly when it should feel fastest. The speed sensation comes
@@ -420,18 +428,9 @@ class Game(private val storage: Storage = Storage.InMemory()) {
             camYaw += wrapPi(course - camYaw) * (1.0 - exp(-CAM_YAW_RATE * dt))
         }
 
-        // Once the car is a wreck it is the tub, not the vehicle, that is
-        // where the car is: the vehicle stopped dead against the tree while
-        // the tub went cartwheeling past it. Following the vehicle would leave
-        // the camera staring at the impact point with the crash happening off
-        // to one side of the screen.
-        val w = wreck
-        val focusX = w?.chassis?.position?.x?.toDouble() ?: v.x
-        val focusZ = w?.chassis?.position?.z?.toDouble() ?: v.z
-
-        val wantX = focusX - sin(camYaw) * back
+        val wantX = v.x - sin(camYaw) * back
         val wantY = height
-        val wantZ = focusZ - cos(camYaw) * back
+        val wantZ = v.z - cos(camYaw) * back
 
         if (!camInitialised) {
             camX = wantX; camY = wantY; camZ = wantZ; camInitialised = true
@@ -445,9 +444,6 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         // Look ahead of the car so corners open up early.
         val lead = 7.0 + (v.speed * 0.30).coerceIn(0.0, 18.0)
-
-        // Vertical FOV: trim it as the screen gets wider, or a landscape phone
-        // gives a fish-eye view.
         val baseFov = (52f - (aspect - 1.6f) * 6f).coerceIn(40f, 56f)
         val fov = baseFov + (v.speed * 0.11).coerceIn(0.0, 8.0).toFloat()
 
@@ -457,16 +453,77 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         return Camera(
             Vec3(camX, camY, camZ),
-            // A wreck is what the player wants to watch, so look straight at
-            // it rather than well past it down a road nobody is driving.
-            if (w == null) Vec3(v.x + sin(camYaw) * lead, 0.9, v.z + cos(camYaw) * lead)
-            else Vec3(focusX, w.chassis.position.y.toDouble().coerceIn(0.4, 3.0), focusZ),
+            Vec3(v.x + sin(camYaw) * lead, 0.9, v.z + cos(camYaw) * lead),
             fov,
             roll.toFloat()
         )
     }
 
-    fun resetCamera() { camInitialised = false }
+    /**
+     * The camera for a crash.
+     *
+     * The chase camera is built to look where the driver is going, which after
+     * an impact is nowhere: it sat behind a tub that was cartwheeling sideways
+     * and pointed the view down a road nobody was driving.
+     *
+     * This one is a broadcast camera. It drops to knee height, so the wreck
+     * goes past above the horizon rather than being looked down on, swings
+     * slowly round it to keep giving a new angle on the same event, and pulls
+     * back as the pieces scatter so the whole debris field stays in frame. The
+     * field of view tightens at the moment of impact and opens out again,
+     * which reads as the shot punching in.
+     *
+     * The shake is trauma-based: squared, so a heavy hit is violent and a
+     * light one barely moves, and it dies away on its own.
+     */
+    private fun crashCamera(w: Wreck, dt: Double, aspect: Float): Camera {
+        val at = w.chassis.position
+        val focusX = at.x.toDouble()
+        val focusZ = at.z.toDouble()
+
+        // How far the debris has spread, so nothing important leaves the frame.
+        var spread = 0.0
+        for (b in w.bodies) {
+            spread = max(spread, hypot(b.position.x - at.x, b.position.z - at.z).toDouble())
+        }
+
+        crashOrbit += CRASH_ORBIT_RATE * dt
+        val back = (9.0 + spread * 0.9).coerceIn(9.0, 26.0)
+        val yaw = camYaw + crashOrbit
+
+        val wantX = focusX - sin(yaw) * back
+        val wantZ = focusZ - cos(yaw) * back
+        val wantY = 1.15 + spread * 0.10
+
+        // Slower than the chase camera on purpose: a crash wants a steady shot
+        // that lets the pieces move through it, not one welded to the tub.
+        val blend = 1.0 - exp(-2.2 * dt)
+        camX += (wantX - camX) * blend
+        camY += (wantY - camY) * blend
+        camZ += (wantZ - camZ) * blend
+
+        val shake = w.trauma * w.trauma
+        val shakeX = sin(w.elapsed * 47.0) * shake * 0.55
+        val shakeY = sin(w.elapsed * 39.0 + 1.7) * shake * 0.40
+        val shakeZ = cos(w.elapsed * 53.0) * shake * 0.55
+
+        val baseFov = (52f - (aspect - 1.6f) * 6f).coerceIn(40f, 56f)
+        val fov = baseFov - (shake * 9.0).toFloat()
+
+        return Camera(
+            Vec3(camX + shakeX, camY + shakeY, camZ + shakeZ),
+            Vec3(focusX, at.y.toDouble().coerceIn(0.5, 3.5), focusZ),
+            fov,
+            // The horizon still answers to the phone, but a shaken camera
+            // rolls with the blow as well.
+            (viewRoll.coerceIn(-MAX_VIEW_ROLL, MAX_VIEW_ROLL) +
+                sin(w.elapsed * 31.0) * shake * 0.18).toFloat()
+        )
+    }
+
+    private var crashOrbit = 0.0
+
+    fun resetCamera() { camInitialised = false; crashOrbit = 0.0 }
 
     /** Shortest way round from one angle to another. */
     private fun wrapPi(a: Double) = atan2(sin(a), cos(a))
@@ -496,6 +553,12 @@ class Game(private val storage: Storage = Storage.InMemory()) {
 
         /** Roughly nose height: where a car meets a tree. */
         private const val IMPACT_HEIGHT = 0.45
+
+        /** How fast the crash camera swings round the wreck, rad/s. */
+        /** How tall a tree stands, for working out what the wreck can hit. */
+        private const val TREE_HEIGHT = 7.0
+
+        private const val CRASH_ORBIT_RATE = 0.42
 
         /** How long a crash gets the screen to itself, seconds. */
         private const val RESULT_DELAY = 3.2

@@ -29,11 +29,24 @@ import kotlin.math.sqrt
  *    harder the hit. See [Deform]. Damage accumulates: a piece that breaks off
  *    and then lands on its edge is bent by both.
  *
- * Deliberately not simulated: piece-against-piece collision. It costs a broad
- * phase and a contact solver, and with the pieces flying apart rather than
- * together it is very nearly never the thing you are looking at.
+ *  - **Things to hit.** The tree or rock that started it is still standing,
+ *    and the pieces are still solid to each other. A wing that comes off
+ *    forwards can be flung back off the trunk, and the tub can be caught by
+ *    its own wheel. Both are resolved as spheres against a cylinder and
+ *    spheres against spheres — with ten-odd bodies the "broad phase" is the
+ *    pair loop itself, and it buys the two moments a crash is actually
+ *    watched for: the rebound, and the pile-up.
  */
-class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
+class Wreck(
+    car: CarMesh.Car,
+    start: Pose,
+    impact: Impact,
+    /** What the car hit, still standing where it was. */
+    private val struck: Standing? = null
+) {
+
+    /** A tree or a rock: an upright cylinder the wreck can bounce off. */
+    class Standing(val x: Double, val z: Double, val radius: Double, val height: Double)
 
     /** Where the car was, and how it was moving, when it stopped being a car. */
     class Pose(
@@ -117,6 +130,15 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
             shapeVersion++
         }
 
+        /**
+         * How many separate blows this piece has taken.
+         *
+         * [damage] is the worst single displacement, which is what the HUD
+         * wants but saturates: a wing that comes off already crumpled to the
+         * limit cannot report a larger number however much more it takes.
+         */
+        val dentCount: Int get() = dents.size
+
         /** How far this piece has been bent out of shape, metres. */
         val damage: Float get() = if (dents.isEmpty()) 0f else Deform.worstDisplacement(base.vertices, vertices)
 
@@ -142,6 +164,41 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
         private set
 
     var elapsed = 0.0
+        private set
+
+    /** Seconds of physics the bodies have actually been through. */
+    var simulated = 0.0
+        private set
+
+    /**
+     * How fast the crash is playing, as a fraction of real time.
+     *
+     * Impact Time, after the trick Burnout built its whole reward loop on: the
+     * moment of the hit is the thing the player wants to see, and at full
+     * speed it is over in three frames. It opens at a crawl, holds while the
+     * pieces come off, and winds back to normal as everything settles.
+     *
+     * Applied to the wreck alone. The HUD, the camera easing and the result
+     * panel all still run on the wall clock, so the game does not feel like it
+     * has hung.
+     */
+    val timeScale: Double
+        get() = when {
+            elapsed >= SLOWMO_END -> 1.0
+            elapsed <= SLOWMO_HOLD -> SLOWMO_FLOOR
+            else -> {
+                val t = ((elapsed - SLOWMO_HOLD) / (SLOWMO_END - SLOWMO_HOLD)).coerceIn(0.0, 1.0)
+                SLOWMO_FLOOR + (1.0 - SLOWMO_FLOOR) * (t * t)
+            }
+        }
+
+    /**
+     * How hard the last blow was, decaying, for the camera shake.
+     *
+     * Trauma rather than a shake: the camera squares it, so a big hit reads as
+     * violent and a small one barely registers, and it dies away on its own.
+     */
+    var trauma = 0.0
         private set
 
     init {
@@ -208,15 +265,22 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
      * send a piece to quite different places.
      */
     fun step(frameDelta: Double) {
+        trauma = max(0.0, trauma - frameDelta * TRAUMA_FADE)
         if (settled) return
-        var remaining = min(frameDelta, 0.25)
+        var remaining = min(frameDelta, 0.25) * timeScale
         while (remaining > 1e-6) {
             val dt = min(STEP, remaining)
             substep(dt.toFloat())
             remaining -= dt
-            elapsed += dt
+            // Simulated time, which is what the bodies experience.
+            simulated += dt
         }
-        if (elapsed > MAX_DURATION) settled = true
+        // Wall-clock time, which is what the slow motion is scheduled against.
+        // Advancing [elapsed] by the simulated amount instead would stretch
+        // the ramp by however much it was already slowing things down, and the
+        // crash would never come back up to speed.
+        elapsed += min(frameDelta, 0.25)
+        if (simulated > MAX_DURATION) settled = true
     }
 
     private fun substep(dt: Float) {
@@ -229,6 +293,8 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
         for (b in bodies) {
             if (!b.attached) groundContact(b, dt)
         }
+        struck?.let { standingContact(it) }
+        pieceContacts()
         settled = bodies.all { it.resting }
     }
 
@@ -338,8 +404,11 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
         if (b.resting) return
         b.position = Vec3(b.position.x, rest, b.position.z)
 
+        // Low enough that scraping along the ground keeps marking the piece
+        // up, not just the one hard landing: a wreck that slides to a halt
+        // should arrive scuffed all over.
         val closing = -b.velocity.y
-        if (closing > 0.35f) {
+        if (closing > 0.15f) {
             b.dent(
                 Dent(
                     at = localPointOf(b, Vec3(b.position.x, 0f, b.position.z)),
@@ -438,6 +507,11 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
      * off and leaves the rear one bolted on.
      */
     private fun applyBlow(atWorld: Vec3, direction: Vec3, speed: Float, spread: Float) {
+        // Every blow shakes the camera, the first one hardest. Squared by the
+        // camera, so this stays linear in the speed and the violence comes
+        // from the squaring rather than from tuning two curves at once.
+        trauma = min(1.0, trauma + speed / TRAUMA_SPEED)
+
         val broken = ArrayList<Body>(2)
         for (b in bodies) {
             val distance = (b.position - atWorld).length()
@@ -471,9 +545,118 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
         // tumbling about whatever moment arm it happened to have.
         val kick = min(speed * 0.55f, 14f)
         b.velocity = chassis.velocity + direction * kick +
-            Vec3(0f, min(3.5f, speed * 0.20f), 0f)
+            Vec3(0f, min(5.0f, speed * 0.28f), 0f)
         b.spin = b.spin + lever.cross(direction * speed) * 1.2f
         clampSpin(b)
+    }
+
+    /**
+     * Bounce the wreck off whatever it hit.
+     *
+     * The obstacle is an upright cylinder and each body is a sphere of its own
+     * reach, which is crude and is the right amount of crude: what the eye
+     * reads is that the tree stopped the piece and threw it back, not the
+     * shape of the contact patch. Only the horizontal part matters — nothing
+     * here ever gets above a tree.
+     */
+    private fun standingContact(o: Standing) {
+        val ox = o.x.toFloat(); val oz = o.z.toFloat()
+        val top = o.height.toFloat()
+        for (b in bodies) {
+            // The assembly is moved by its tub, so only the tub is tested for
+            // it; testing every bolted-on piece would apply the same push
+            // several times over.
+            if (b.attached && b !== chassis) continue
+            if (b.position.y - b.radius > top) continue
+            val dx = b.position.x - ox
+            val dz = b.position.z - oz
+            val distance = sqrt(dx * dx + dz * dz)
+            val reach = o.radius.toFloat() + b.radius * SPHERE_SHRINK
+            if (distance >= reach) continue
+            val nx = if (distance > 1e-5f) dx / distance else 1f
+            val nz = if (distance > 1e-5f) dz / distance else 0f
+
+            b.position = Vec3(ox + nx * reach, b.position.y, oz + nz * reach)
+            val closing = -(b.velocity.x * nx + b.velocity.z * nz)
+            if (closing <= 0f) continue
+            b.resting = false
+            b.velocity = Vec3(
+                b.velocity.x + nx * closing * (1f + RESTITUTION),
+                b.velocity.y,
+                b.velocity.z + nz * closing * (1f + RESTITUTION)
+            )
+            b.spin = b.spin + Vec3(0f, 1f, 0f).cross(Vec3(nx, 0f, nz)) * (closing * 0.30f)
+            clampSpin(b)
+            blow(b, Vec3(b.position.x - nx * b.radius, b.position.y, b.position.z - nz * b.radius),
+                Vec3(nx, 0f, nz), closing)
+            if (b === chassis) followChassis()
+        }
+    }
+
+    /**
+     * Pieces against each other.
+     *
+     * Only what has come off: two parts still bolted on cannot collide,
+     * because they move as one body and were built not overlapping. That
+     * leaves a handful of loose pieces, so the pair loop is the broad phase.
+     */
+    private fun pieceContacts() {
+        val loose = bodies.filter { !it.attached }
+        for (i in loose.indices) {
+            for (j in i + 1 until loose.size) {
+                val a = loose[i]; val b = loose[j]
+                val dx = b.position.x - a.position.x
+                val dy = b.position.y - a.position.y
+                val dz = b.position.z - a.position.z
+                val distance = sqrt(dx * dx + dy * dy + dz * dz)
+                val reach = (a.radius + b.radius) * SPHERE_SHRINK
+                if (distance >= reach || distance < 1e-5f) continue
+                val nx = dx / distance; val ny = dy / distance; val nz = dz / distance
+
+                // Split the overlap by mass, so a wheel shoulders a wing aside
+                // rather than the two meeting in the middle.
+                val total = a.mass + b.mass
+                val overlap = reach - distance
+                val aShare = b.mass / total
+                a.position = a.position - Vec3(nx, ny, nz) * (overlap * aShare)
+                b.position = b.position + Vec3(nx, ny, nz) * (overlap * (1f - aShare))
+
+                val rvx = b.velocity.x - a.velocity.x
+                val rvy = b.velocity.y - a.velocity.y
+                val rvz = b.velocity.z - a.velocity.z
+                val closing = -(rvx * nx + rvy * ny + rvz * nz)
+                if (closing <= 0f) continue
+                a.resting = false; b.resting = false
+                val impulse = closing * (1f + RESTITUTION)
+                a.velocity = a.velocity - Vec3(nx, ny, nz) * (impulse * aShare)
+                b.velocity = b.velocity + Vec3(nx, ny, nz) * (impulse * (1f - aShare))
+                a.spin = a.spin + Vec3(nx, ny, nz).cross(Vec3(rvx, rvy, rvz)) * 0.25f
+                b.spin = b.spin - Vec3(nx, ny, nz).cross(Vec3(rvx, rvy, rvz)) * 0.25f
+                clampSpin(a); clampSpin(b)
+
+                val where = Vec3(
+                    a.position.x + nx * a.radius,
+                    a.position.y + ny * a.radius,
+                    a.position.z + nz * a.radius
+                )
+                blow(a, where, Vec3(nx, ny, nz), closing)
+                blow(b, where, Vec3(-nx, -ny, -nz), closing)
+            }
+        }
+    }
+
+    /** A single dent from a contact, and the shake that goes with it. */
+    private fun blow(b: Body, atWorld: Vec3, direction: Vec3, closing: Float) {
+        if (closing < 0.5f) return
+        trauma = min(1.0, trauma + closing / (TRAUMA_SPEED * 3f))
+        b.dent(
+            Dent(
+                at = localPointOf(b, atWorld),
+                direction = localDirectionOf(b, direction),
+                depth = min(MAX_DENT, closing * DENT_PER_SPEED * 0.7f),
+                reach = max(0.30f, b.radius * 0.8f)
+            )
+        )
     }
 
     private fun clampSpin(b: Body) {
@@ -511,14 +694,33 @@ class Wreck(car: CarMesh.Car, start: Pose, impact: Impact) {
         private const val GRAVITY = 9.81f
         private const val AIR_DRAG = 0.22f
         private const val SPIN_DRAG = 1.35f
-        private const val RESTITUTION = 0.28f
+        private const val RESTITUTION = 0.42f
         private const val GROUND_FRICTION = 0.55f
         private const val SLEEP_SPEED = 0.35f
         private const val SLIDE_TO_SPIN = 1.6f
         private const val SLEEP_SPIN = 0.60f
         private const val MAX_SPIN = 12f
         private const val MAX_DENTS = 6
+
+        /** How slowly the moment of impact plays, and for how long. */
+        private const val SLOWMO_FLOOR = 0.12
+        private const val SLOWMO_HOLD = 0.75
+        private const val SLOWMO_END = 2.6
+        private const val TRAUMA_FADE = 1.6
+
+        /** The impact speed that fills the shake meter on its own, m/s. */
+        private const val TRAUMA_SPEED = 30f
         private const val CONTACT_SKIN = 0.02f
+
+        /**
+         * How much of a body's own reach counts as solid.
+         *
+         * A body's radius is the corner-to-corner reach of its bounding box,
+         * which for a long thin thing like a wing is far more than the piece
+         * really occupies. Taking it whole makes wreckage hover apart; this is
+         * the fudge that stops it looking wrong in the common case.
+         */
+        private const val SPHERE_SHRINK = 0.62f
         private const val TOPPLE_RATE = 5.5f
 
         /** Metres of crumple per metre-per-second of impact. */

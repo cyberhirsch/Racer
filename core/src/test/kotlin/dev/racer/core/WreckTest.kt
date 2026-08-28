@@ -37,7 +37,12 @@ class WreckTest {
         )
     }
 
-    private fun run(w: Wreck, seconds: Double = 12.0): Double {
+    /**
+     * Wall-clock seconds, which is what the game feeds it — and which is no
+     * longer the same as simulated seconds, because a crash opens in slow
+     * motion. The budget allows for the couple of seconds that costs.
+     */
+    private fun run(w: Wreck, seconds: Double = 20.0): Double {
         var t = 0.0
         while (t < seconds && !w.settled) {
             w.step(1.0 / 60.0)
@@ -109,9 +114,17 @@ class WreckTest {
         val w = crash(speed = 20.0)
         val wing = body(w, CarMesh.Part.FRONT_WING)
         val afterImpact = wing.damage
+        val blowsAtImpact = wing.dentCount
         run(w)
         assertTrue("the wing should still be bent after it lands", wing.damage >= afterImpact)
-        assertTrue("landing on it should bend it further", wing.damage > afterImpact)
+        // Counted, not measured: a wing that comes off already crumpled to the
+        // limit takes more damage on landing without the worst displacement
+        // anywhere on it getting any worse.
+        assertTrue(
+            "landing on it should bend it further: $blowsAtImpact blows at impact, " +
+                "${wing.dentCount} once it stopped",
+            wing.dentCount > blowsAtImpact
+        )
     }
 
     @Test
@@ -233,6 +246,76 @@ class WreckTest {
                 w.chassis.orientation.w.toDouble(), b.orientation.w.toDouble(), 1e-5
             )
         }
+    }
+
+    /**
+     * Impact Time, the thing Burnout got right: the moment of contact plays
+     * slowly enough to be read, then hands the speed back.
+     */
+    @Test
+    fun `a crash opens in slow motion and comes back up to speed`() {
+        val w = crash(speed = 30.0)
+        assertTrue("the moment of impact should crawl", w.timeScale < 0.3)
+        var t = 0.0
+        while (t < 0.5) { w.step(1.0 / 60.0); t += 1.0 / 60.0 }
+        assertTrue("half a second in it should still be slow", w.timeScale < 0.5)
+        while (t < 4.0) { w.step(1.0 / 60.0); t += 1.0 / 60.0 }
+        assertEquals("by four seconds it should be running at full speed", 1.0, w.timeScale, 1e-9)
+        assertTrue(
+            "slow motion means less physics than wall clock: %.2f s simulated in %.2f s"
+                .format(w.simulated, t),
+            w.simulated < t
+        )
+    }
+
+    @Test
+    fun `a hard hit shakes the camera, and the shake dies away`() {
+        val w = crash(speed = 40.0)
+        val hit = w.trauma
+        assertTrue("a 40 m/s shunt should shake the camera hard, got $hit", hit > 0.8)
+        var t = 0.0
+        while (t < 3.0) { w.step(1.0 / 60.0); t += 1.0 / 60.0 }
+        assertTrue("the shake should have died away, still ${w.trauma}", w.trauma < 0.2)
+    }
+
+    /** The tree is still standing, and nothing may come to rest inside it. */
+    @Test
+    fun `the wreck cannot come to rest inside the tree it hit`() {
+        val tree = Wreck.Standing(x = 0.0, z = 3.0, radius = 0.55, height = 7.0)
+        val w = Wreck(
+            car,
+            Wreck.Pose(0.0, 0.0, 0.0, 0.0, 30.0, 0.0),
+            Wreck.Impact(0.0, 2.6, 0.5, 0.0, -1.0, 30.0),
+            tree
+        )
+        run(w)
+        for (b in w.bodies) {
+            if (b.attached && b !== w.chassis) continue
+            val distance = kotlin.math.hypot(b.position.x - tree.x, b.position.z - tree.z)
+            assertTrue(
+                "${b.part ?: "wheel"} ended up $distance m from a trunk of radius ${tree.radius}",
+                distance > tree.radius
+            )
+        }
+    }
+
+    /** What the obstacle is for: it throws things back. */
+    @Test
+    fun `pieces flung at the tree are thrown back off it`() {
+        fun settleZ(tree: Wreck.Standing?): Double {
+            val w = Wreck(
+                car,
+                Wreck.Pose(0.0, 0.0, 0.0, 0.0, 34.0, 0.0),
+                Wreck.Impact(0.0, 2.6, 0.5, 0.0, -1.0, 34.0),
+                tree
+            )
+            run(w)
+            return w.bodies.filter { !it.attached }.map { it.position.z.toDouble() }.average()
+        }
+        val free = settleZ(null)
+        val blocked = settleZ(Wreck.Standing(0.0, 3.0, 0.55, 7.0))
+        println("loose pieces settle at z=%.2f with nothing there, %.2f against a tree".format(free, blocked))
+        assertTrue("the tree should hold the wreckage back, $free vs $blocked", blocked < free)
     }
 
     @Test
