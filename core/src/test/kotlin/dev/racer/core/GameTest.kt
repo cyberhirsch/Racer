@@ -159,7 +159,21 @@ class GameTest {
         g.loadLevel(0)
         g.start()
         g.update(0.01, Input())
-        repeat(600) { g.update(1.0 / 60.0, Input(throttle = 1.0, steer = 0.6)) }
+
+        // Driven properly, round the circuit. This used to hold full throttle
+        // and half lock for ten seconds, which drives off the track in a
+        // circle — harmless when the surroundings were empty, and now a
+        // crash, after which the camera is quite rightly looking at the wreck
+        // rather than ahead of a car that no longer exists.
+        var steer = 0.0
+        var hint = 0
+        repeat(300) {
+            val (input, newHint) = Autopilot.input(g.vehicle, g.track!!, hint, steer, 1.0 / 60.0)
+            hint = newHint
+            steer = input.steer
+            g.update(1.0 / 60.0, input)
+        }
+        assertEquals("the reference driver should still be racing", Game.State.RACING, g.state)
 
         val cam = g.camera(1.0 / 60.0, 2.0f)
         val dx = cam.eye.x - g.vehicle.x.toFloat()

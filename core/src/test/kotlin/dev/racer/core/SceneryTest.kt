@@ -114,6 +114,82 @@ class SceneryTest {
         assertTrue("a new race must not start in the old wreck", g.wreck == null)
     }
 
+    /**
+     * Every obstacle is solid, wherever it stands on the circuit.
+     *
+     * The one that shipped: obstacles were filed into frame buckets using the
+     * hinted [Track.locate], which only searches forty frames either side of
+     * the hint it is given — and it was given nought. So the entire circuit's
+     * scenery landed in the eighty frames around the start line, and anywhere
+     * else the trees were drawn and the physics could not see them. You could
+     * drive through the lot at two hundred, which is exactly what was reported.
+     */
+    @Test
+    fun `an obstacle is solid wherever it stands, not only near the start line`() {
+        for (level in 0 until Levels.BUILT_IN.size) {
+            val t = Track(Levels.config(level))
+            // A spread all the way round, so a bug that only works near the
+            // start line cannot pass.
+            val sample = (0 until 40).map { t.obstacles[it * t.obstacles.size / 40] }
+            for (o in sample) {
+                // The hint a car alongside it would be carrying, found the
+                // slow honest way so the test cannot inherit the bug.
+                var hint = 0
+                var best = Double.MAX_VALUE
+                for (i in t.frames.indices) {
+                    val d = hypot(t.frames[i].pos.x - o.x, t.frames[i].pos.z - o.z)
+                    if (d < best) { best = d; hint = i }
+                }
+                assertTrue(
+                    "level ${level + 1}: the obstacle at ${o.x.toInt()},${o.z.toInt()} " +
+                        "(frame $hint of ${t.frames.size}) is invisible to the physics",
+                    t.obstacleNear(o.x, o.z, hint, 1.6) != null
+                )
+            }
+        }
+        println("obstacles all round every circuit are solid")
+    }
+
+    /**
+     * Leaving the circuit at racing speed should end badly, nearly always.
+     *
+     * Not always: getting away with one is worth having. But when this read
+     * nineteen per cent — four excursions in five touching nothing at all —
+     * the game was effectively uncrashable, and that is what "I didn't see
+     * collisions" meant.
+     */
+    @Test
+    fun `leaving the circuit at racing speed nearly always ends in a crash`() {
+        var crashed = 0
+        var tried = 0
+        for (level in 0 until Levels.BUILT_IN.size) {
+            for (lap in listOf(200, 700, 1260)) {
+                for (steer in listOf(-0.65, -0.4, 0.4, 0.65)) {
+                    val g = Game(); g.loadLevel(level); g.start()
+                    var s = 0.0
+                    var hint = 0
+                    repeat(lap) {
+                        if (g.state != Game.State.RACING) return@repeat
+                        val (inp, h) = Autopilot.input(g.vehicle, g.track!!, hint, s, Game.STEP)
+                        hint = h; s = inp.steer; g.update(Game.STEP, inp)
+                    }
+                    if (g.state != Game.State.RACING) continue
+                    // Turn it off the circuit, then straight on: a driver who
+                    // has lost it, not one holding lock in a circle.
+                    var steps = 0
+                    while (g.state == Game.State.RACING && steps++ < 1200) {
+                        g.update(Game.STEP, Input(throttle = 1.0, steer = if (steps < 48) steer else 0.0))
+                    }
+                    tried++
+                    if (g.state == Game.State.FAILED) crashed++
+                }
+            }
+        }
+        val rate = 100.0 * crashed / tried
+        println("%d of %d excursions ended in a crash (%.0f%%)".format(crashed, tried, rate))
+        assertTrue("only %.0f%% of excursions hit anything".format(rate), rate > 70.0)
+    }
+
     /** Rolling into one at walking pace should not. */
     @Test
     fun `nudging something solid slowly just stops the car`() {

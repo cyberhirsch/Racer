@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -179,7 +180,7 @@ class Track(val cfg: LevelConfig) {
         }
 
         obstacles = growScenery()
-        obstaclesByFrame = obstacles.groupBy { locate(it.x, it.z, 0).index }
+        obstaclesByFrame = obstacles.groupBy { nearestFrame(it.x, it.z) }
     }
 
     /**
@@ -195,27 +196,76 @@ class Track(val cfg: LevelConfig) {
     private fun growScenery(): List<Obstacle> {
         val rng = Mulberry32(cfg.seed * 31 + 17)
         val out = ArrayList<Obstacle>()
-        val nearest = runoff + SCENERY_CLEARANCE
-        val furthest = runoff + GRASS_APRON - 12.0
+
+        // How far out the scenery reaches.
+        //
+        // It used to run to the far edge of the apron, seventy-odd metres out,
+        // spread uniformly. That put one obstacle per sixteen metres of track
+        // across a band seventy metres wide on each side — an areal density so
+        // low you could leave the circuit at a hundred and sixty and coast to a
+        // standstill without touching anything, which is exactly what
+        // happened. It also put most of them beyond [deepGrass], where the
+        // going is heavy enough to have scrubbed the speed off long before you
+        // arrived.
+        //
+        // Now they stop short of the deep grass, so anything you reach, you
+        // reach while still travelling.
+        val furthest = runoff + SCENERY_REACH
 
         var i = 0
         while (i < frames.size - 1) {
-            i += 3 + (rng.next() * 6).toInt()
+            i += 2 + (rng.next() * 4).toInt()
             if (i >= frames.size - 1) break
             val f = frames[i % frames.size]
             for (side in listOf(-1.0, 1.0)) {
-                if (rng.next() > 0.55) continue
-                val out_ = nearest + rng.next() * (furthest - nearest)
-                val along = (rng.next() - 0.5) * 6.0
-                val x = f.pos.x + f.right.x * out_ * side + f.tangent.x * along
-                val z = f.pos.z + f.right.z * out_ * side + f.tangent.z * along
+                if (rng.next() > 0.80) continue
 
-                // Clear of the circuit everywhere, not just here.
-                if (abs(locate(x, z, i).lateral) < nearest) continue
+                // Trees come in clumps. One at a time reads as a plantation.
+                val clump = 1 + (rng.next() * rng.next() * 3.0).toInt()
+                repeat(clump) {
+                    val tree = rng.next() < 0.66
+                    val radius = if (tree) 0.7 + rng.next() * 0.5 else 0.9 + rng.next() * 1.3
 
-                val tree = rng.next() < 0.62
-                val radius = if (tree) 0.7 + rng.next() * 0.5 else 0.9 + rng.next() * 1.3
-                out += Obstacle(x, z, radius, tree)
+                    // Where its *surface* may start: clear of the run-off by
+                    // enough that the whole width of it can still be used, and
+                    // no further. Measured from the obstacle's own size rather
+                    // than fixed, or a big rock ends up further inside the
+                    // run-off than a small tree.
+                    val nearest = runoff + SCENERY_MARGIN + radius
+                    if (nearest >= furthest) return@repeat
+
+                    // Two bands, not one gradient.
+                    //
+                    // Most of it is a treeline along the edge of the run-off,
+                    // close enough that leaving the circuit at speed means
+                    // meeting something within a second. The rest is scattered
+                    // out across the field for depth, because a bare plain
+                    // beyond a hedge looks like a bare plain beyond a hedge.
+                    //
+                    // A single squared distribution was tried first and is not
+                    // enough on its own: over a thirty-metre band it still put
+                    // the average obstacle twenty-one metres out, and half the
+                    // ways off the circuit still met nothing at all.
+                    val outward = if (rng.next() < VERGE_SHARE) {
+                        nearest + rng.next() * VERGE_DEPTH
+                    } else {
+                        val u = rng.next()
+                        nearest + (furthest - nearest) * u * u
+                    }
+                    val along = (rng.next() - 0.5) * 8.0
+                    val x = f.pos.x + f.right.x * outward * side + f.tangent.x * along
+                    val z = f.pos.z + f.right.z * outward * side + f.tangent.z * along
+
+                    // Clear of the circuit everywhere, not just here: a track
+                    // that doubles back can put another stretch of tarmac
+                    // right where this was about to go. Measured against every
+                    // frame, because the hinted search only ever looked at the
+                    // forty either side of the one it was given and so could
+                    // not see the far side of a hairpin at all.
+                    if (distanceToCircuit(x, z) < runoff + SCENERY_MARGIN + radius) return@repeat
+
+                    out += Obstacle(x, z, radius, tree)
+                }
             }
         }
         return out
@@ -237,6 +287,38 @@ class Track(val cfg: LevelConfig) {
      * last known frame, so this is O(few) per call rather than a scan of the
      * whole circuit.
      */
+    /**
+     * The nearest frame on the whole circuit, searched exhaustively.
+     *
+     * [locate] deliberately does not do this — it searches [SEARCH_SPAN]
+     * frames either side of a hint, which is right for a car that moves a few
+     * centimetres per step and wrong for anything else. Scenery is anything
+     * else: bucketing it with `locate(x, z, 0)` filed the entire circuit's
+     * obstacles into the forty frames either side of the start line, because
+     * that is the only place the search ever looked. Everywhere else on the
+     * track the trees were drawn and the physics could not see them, so you
+     * drove straight through the lot.
+     *
+     * Only ever called while building a track, where scanning every frame is
+     * a few milliseconds once.
+     */
+    private fun nearestFrame(x: Double, z: Double): Int {
+        var best = 0
+        var bestD2 = Double.MAX_VALUE
+        for (i in frames.indices) {
+            val p = frames[i].pos
+            val d2 = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z)
+            if (d2 < bestD2) { bestD2 = d2; best = i }
+        }
+        return best
+    }
+
+    /** How far the nearest point of the circuit is from a point, metres. */
+    private fun distanceToCircuit(x: Double, z: Double): Double {
+        val f = frames[nearestFrame(x, z)]
+        return hypot(x - f.pos.x, z - f.pos.z)
+    }
+
     fun locate(x: Double, z: Double, hint: Int = 0): Location {
         val n = frames.size
         var best = hint
@@ -320,7 +402,23 @@ class Track(val cfg: LevelConfig) {
         const val GRASS_APRON = 90.0
 
         /** How far past the run-off the nearest tree or rock may stand. */
-        private const val SCENERY_CLEARANCE = 6.0
+        /**
+         * How far an obstacle's surface must clear the run-off, metres.
+         *
+         * The car is a circle of radius 1.6 m, so this leaves the whole width
+         * of the run-off usable with a little to spare — and puts the first
+         * thing you can hit a few centimetres beyond it.
+         */
+        private const val SCENERY_MARGIN = 2.0
+
+        /** How far out the scenery goes. Short of [deepGrass] on purpose. */
+        private const val SCENERY_REACH = 30.0
+
+        /** How much of it lines the edge of the run-off rather than the field. */
+        private const val VERGE_SHARE = 0.70
+
+        /** How deep that treeline is, metres. */
+        private const val VERGE_DEPTH = 6.0
 
         /** Frames either side of the car to check for scenery. */
         private const val SCENERY_SPAN = 6
