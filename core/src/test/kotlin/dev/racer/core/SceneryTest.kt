@@ -92,7 +92,16 @@ class SceneryTest {
         assertTrue("a crash should leave a wreck", w != null)
         w!!
         assertTrue("something should have come off at 45 m/s", w.piecesLost > 0)
-        assertTrue("the car should be bent", w.worstDamage > 0.05f)
+        // The panels crumple over the frames after the blow rather than on it,
+        // so the bending is worth reading only once the lattices have moved.
+        repeat(600) { g.update(Game.STEP, Input()) }
+        // Folding, with the pieces' bodily movement taken out of it, so a few
+        // centimetres here is a few centimetres of actual crumpled bodywork.
+        assertTrue("the car should be bent, worst is ${w.worstDamage} m", w.worstDamage > 0.02f)
+        assertTrue(
+            "the damage should be permanent, not a panel caught mid-wobble",
+            w.bodies.sumOf { it.yielded } > 0
+        )
 
         // The race is over, but the crash is not: the game keeps stepping it.
         var t2 = 0.0

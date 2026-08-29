@@ -522,6 +522,9 @@ data class Quat(val x: Float, val y: Float, val z: Float, val w: Float) {
      * wreck is in motion the error is far below what anyone can see, and it
      * cannot run away the way an un-normalised quaternion would.
      */
+    /** The rotation that undoes this one. Unit quaternions, so the conjugate. */
+    fun inverse() = Quat(-x, -y, -z, w)
+
     fun integrate(angularVelocity: Vec3, dt: Float): Quat {
         val h = dt * 0.5f
         val spin = Quat(angularVelocity.x * h, angularVelocity.y * h, angularVelocity.z * h, 0f)

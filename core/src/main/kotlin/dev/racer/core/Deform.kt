@@ -4,88 +4,14 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
- * Permanent damage to a panel.
+ * Mesh arithmetic shared by everything that bends bodywork.
  *
- * A dent is a single blow: where it landed, which way it went, and how hard.
- * Panels keep the list of every dent they have taken, and their shape is that
- * list applied to the shape they left the factory with. Deformation is
- * therefore *plastic* — carbon fibre does not spring back, and neither does
- * this. Hit the same corner twice and it folds twice as far.
- *
- * Held in the piece's own local coordinates, so a piece that has broken off
- * and is tumbling still dents correctly wherever it lands.
- */
-data class Dent(
-    /** Where the blow landed, in the piece's local frame. */
-    val at: Vec3,
-    /** Which way the material was pushed. Unit length. */
-    val direction: Vec3,
-    /** How far the material at the centre of the blow moved, metres. */
-    val depth: Float,
-    /** How far out from the centre the damage reaches, metres. */
-    val reach: Float
-)
-
-/**
- * Applies dents to a mesh.
- *
- * The alternative — a mass-spring lattice relaxed every frame — was tried and
- * is not worth it here. It costs a solver iteration per spring per frame for
- * something the player sees for about four seconds, it needs tuning to stay
- * stable at large time steps, and once the springs have yielded and settled it
- * arrives at very nearly this shape anyway. What matters visually is that the
- * panel folds *inwards, locally, and stays folded*, which is what a field of
- * blows applied to the original shape gives you, for one pass over the
- * vertices each time something is actually hit.
+ * The deformation itself lives in [SoftCage] — this is the two pieces of it
+ * that are about triangles rather than about physics: making a folded panel
+ * catch the light like a folded panel, and saying how far one has been pushed
+ * out of shape.
  */
 object Deform {
-
-    /**
-     * The undamaged mesh plus every dent it has taken.
-     *
-     * Returns a fresh vertex array; [base] is never modified, because it is
-     * the only record of the original shape and every dent is measured from
-     * it.
-     */
-    fun apply(base: FloatArray, indices: IntArray, dents: List<Dent>): FloatArray {
-        val out = base.copyOf()
-        if (dents.isEmpty()) return out
-
-        val stride = Mesh.FLOATS_PER_VERTEX
-        var i = 0
-        while (i < out.size) {
-            var px = out[i]; var py = out[i + 1]; var pz = out[i + 2]
-            for (d in dents) {
-                val dx = px - d.at.x; val dy = py - d.at.y; val dz = pz - d.at.z
-                val distance = sqrt(dx * dx + dy * dy + dz * dz)
-                if (distance >= d.reach) continue
-
-                // Smooth falloff, so the fold blends into the panel around it
-                // rather than punching a cone through it.
-                val t = 1f - distance / d.reach
-                val w = t * t * (3f - 2f * t)
-
-                px += d.direction.x * d.depth * w
-                py += d.direction.y * d.depth * w
-                pz += d.direction.z * d.depth * w
-
-                // Material has to go somewhere. Pulling the surface in toward
-                // the axis of the blow as well as along it is what makes this
-                // read as crumpling rather than as a dent stamped by a press.
-                val along = dx * d.direction.x + dy * d.direction.y + dz * d.direction.z
-                val ox = dx - d.direction.x * along
-                val oy = dy - d.direction.y * along
-                val oz = dz - d.direction.z * along
-                val pucker = w * 0.35f
-                px -= ox * pucker; py -= oy * pucker; pz -= oz * pucker
-            }
-            out[i] = px; out[i + 1] = py; out[i + 2] = pz
-            i += stride
-        }
-
-        recomputeNormals(out, indices)
-        return out
-    }
 
     /**
      * Rebuild the normals from the deformed positions.
@@ -97,7 +23,7 @@ object Deform {
      * flat-shaded and smooth-shaded parts of the same mesh both come out
      * right.
      */
-    private fun recomputeNormals(v: FloatArray, indices: IntArray) {
+    fun recomputeNormals(v: FloatArray, indices: IntArray) {
         val stride = Mesh.FLOATS_PER_VERTEX
         var i = 0
         while (i < v.size) { v[i + 3] = 0f; v[i + 4] = 0f; v[i + 5] = 0f; i += stride }
@@ -138,15 +64,37 @@ object Deform {
         }
     }
 
-    /** How far the shape has been pushed off its original, at its worst point. */
+    /**
+     * How far the shape has been pushed off its original, at its worst point.
+     *
+     * The average movement is taken out first, because a piece whose lattice
+     * has been shoved bodily sideways has not been damaged at all — every
+     * vertex has moved by the same amount and the shape is identical. Without
+     * that subtraction a small part that takes a blow reaching right across it
+     * reports a huge deformation for having been pushed, and the panel that
+     * was genuinely crumpled next to it looks undamaged by comparison.
+     */
     fun worstDisplacement(base: FloatArray, deformed: FloatArray): Float {
         val stride = Mesh.FLOATS_PER_VERTEX
-        var worst = 0f
+        if (base.isEmpty()) return 0f
+        var mx = 0f; var my = 0f; var mz = 0f
+        var n = 0
         var i = 0
         while (i < base.size) {
-            val dx = deformed[i] - base[i]
-            val dy = deformed[i + 1] - base[i + 1]
-            val dz = deformed[i + 2] - base[i + 2]
+            mx += deformed[i] - base[i]
+            my += deformed[i + 1] - base[i + 1]
+            mz += deformed[i + 2] - base[i + 2]
+            n++
+            i += stride
+        }
+        mx /= n; my /= n; mz /= n
+
+        var worst = 0f
+        i = 0
+        while (i < base.size) {
+            val dx = deformed[i] - base[i] - mx
+            val dy = deformed[i + 1] - base[i + 1] - my
+            val dz = deformed[i + 2] - base[i + 2] - mz
             worst = max(worst, sqrt(dx * dx + dy * dy + dz * dz))
             i += stride
         }
